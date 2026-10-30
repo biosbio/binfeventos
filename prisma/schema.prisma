@@ -44,6 +44,8 @@ model Organization {
   settlements Settlement[]
   ledgerEntries FinancialLedgerEntry[]
   reserves    FinancialReserve[]
+  stations    BoxOfficeStation[]
+  shifts      CashShift[]
 
   @@map("organizations")
 }
@@ -61,6 +63,7 @@ model User {
   memberships OrgMembership[]
   sessions    Session[]
   orders      Order[]
+  shifts      CashShift[]
 
   @@map("users")
 }
@@ -169,6 +172,7 @@ model Venue {
   organization Organization  @relation(fields: [organizationId], references: [id])
   sessions     EventSession[]
   seatMaps     SeatMap[]
+  stations     BoxOfficeStation[]
 
   @@map("venues")
 }
@@ -442,6 +446,7 @@ model Order {
   attendees    OrderAttendee[]
   payments     Payment[]
   refunds      Refund[]
+  shiftId      String?     @db.Uuid // turno de bilheteira, quando BOX_OFFICE
 
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
@@ -488,8 +493,6 @@ model OrderAttendee {
 // Parte 5 — Domínio 5: Pagamentos e Finanças
 // ============================================================
 
-// Métodos de pagamento suportados (doc. mestra: cartões, Mobile Money,
-// carteiras digitais, transferências, dinheiro na bilheteira física)
 enum PaymentMethodType {
   CARD
   MOBILE_MONEY
@@ -498,14 +501,12 @@ enum PaymentMethodType {
   CASH
 }
 
-// Prestador de pagamento por mercado (adaptadores substituíveis)
 model PaymentProvider {
   id          String  @id @default(uuid()) @db.Uuid
-  code        String  @unique // ex: "stripe", "multicaixa"
+  code        String  @unique
   name        String
   country     String
   isActive    Boolean @default(true)
-  // Configuração normalizada do adaptador (chaves via gestor de segredos)
   adapterConfig Json?
   createdAt   DateTime @default(now())
 
@@ -514,7 +515,6 @@ model PaymentProvider {
   @@map("payment_providers")
 }
 
-// Estados do pagamento (doc. mestra, Parte 3, secção 2)
 enum PaymentStatus {
   CREATED
   INITIATED
@@ -530,8 +530,6 @@ enum PaymentStatus {
   DISPUTED
 }
 
-// Pagamento: uma encomenda pode ter múltiplas tentativas controladas
-// (Decisão aprovada — Opção B), mas apenas uma confirmação válida.
 model Payment {
   id               String        @id @default(uuid()) @db.Uuid
   organizationId   String        @db.Uuid
@@ -541,8 +539,8 @@ model Payment {
   status           PaymentStatus @default(CREATED)
   amountCents      Int
   currency         String        @default("AOA")
-  providerRef      String?       // identificador normalizado da transação no prestador
-  providerRawPayload Json?       // payload/webhook bruto (evidência)
+  providerRef      String?
+  providerRawPayload Json?
   confirmedAt      DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -557,12 +555,10 @@ model Payment {
   @@map("payments")
 }
 
-// Nova tentativa de pagamento (Opção B): id único, mesma encomenda,
-// histórico preservado, sem cobranças duplicadas.
 enum AttemptStatus {
-  ACTIVE      // tentativa em curso; se confirmada, as restantes são bloqueadas
-  BLOCKED     // bloqueada porque outra tentativa foi confirmada
-  COMPLETED   // tentativa que resultou em confirmação
+  ACTIVE
+  BLOCKED
+  COMPLETED
   FAILED
 }
 
@@ -583,7 +579,6 @@ model PaymentAttempt {
   @@map("payment_attempts")
 }
 
-// Reembolsos: totais e parciais, com rastreabilidade
 enum RefundStatus {
   REQUESTED
   UNDER_ANALYSIS
@@ -603,7 +598,7 @@ model Refund {
   amountCents    Int
   reason         String
   status         RefundStatus @default(REQUESTED)
-  approvedByUserId String?    @db.Uuid // segregação: quem solicita ≠ quem aprova
+  approvedByUserId String?    @db.Uuid
   requestedByUserId String?   @db.Uuid
   providerRef    String?
   createdAt      DateTime     @default(now())
@@ -617,7 +612,6 @@ model Refund {
   @@map("refunds")
 }
 
-// Chargeback: contestação pelo titular do meio de pagamento
 enum ChargebackStatus {
   NOTIFIED
   EVIDENCE_GATHERING
@@ -632,7 +626,7 @@ model Chargeback {
   paymentId     String           @db.Uuid
   providerRef   String?
   amountCents   Int
-  deadlineAt    DateTime? // prazo de resposta do prestador
+  deadlineAt    DateTime?
   status        ChargebackStatus @default(NOTIFIED)
   decisionNotes String?
   createdAt     DateTime         @default(now())
@@ -644,7 +638,6 @@ model Chargeback {
   @@map("chargebacks")
 }
 
-// Liquidação: disponibilização dos valores devidos ao organizador
 enum SettlementStatus {
   PENDING
   APPROVED
@@ -659,17 +652,17 @@ model Settlement {
   organizationId String           @db.Uuid
   periodStart    DateTime
   periodEnd      DateTime
-  grossCents     Int              @default(0) // vendas brutas
-  commissionCents Int             @default(0) // receita da plataforma
-  providerFeeCents Int            @default(0) // taxas do prestador
-  refundedCents   Int             @default(0) // reembolsos
-  chargebackCents Int             @default(0) // contestações
-  netCents       Int              @default(0) // valor líquido
-  reservedCents  Int              @default(0) // retido em reserva
-  payableCents   Int              @default(0) // saldo disponível a liquidar
+  grossCents     Int              @default(0)
+  commissionCents Int             @default(0)
+  providerFeeCents Int            @default(0)
+  refundedCents   Int             @default(0)
+  chargebackCents Int             @default(0)
+  netCents       Int              @default(0)
+  reservedCents  Int              @default(0)
+  payableCents   Int              @default(0)
   status         SettlementStatus @default(PENDING)
   preparedByUserId  String?      @db.Uuid
-  approvedByUserId  String?      @db.Uuid // dupla aprovação
+  approvedByUserId  String?      @db.Uuid
   paidAt         DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -680,7 +673,6 @@ model Settlement {
   @@map("settlements")
 }
 
-// Reservas financeiras baseadas no risco
 enum ReserveStatus {
   ACTIVE
   PARTIALLY_RELEASED
@@ -705,9 +697,6 @@ model FinancialReserve {
   @@map("financial_reserves")
 }
 
-// Livro-razão financeiro: histórico IMUTÁVEL.
-// Nunca apagar/sobrescrever lançamentos confirmados; correções = lançamentos
-// compensatórios. Registos mínimos exigidos pela doc. mestra, secção 11.
 enum LedgerEntryType {
   SALE
   PAYMENT
@@ -727,14 +716,13 @@ model FinancialLedgerEntry {
   id             String          @id @default(uuid()) @db.Uuid
   organizationId String          @db.Uuid
   type           LedgerEntryType
-  amountCents    Int             // positivo (débito) / negativo (crédito)
+  amountCents    Int
   currency       String          @default("AOA")
   orderId        String?         @db.Uuid
   paymentId      String?         @db.Uuid
   settlementId   String?         @db.Uuid
   refundId       String?         @db.Uuid
   description    String?
-  // Entradas compensatórias referenciam o lançamento original
   compensatesEntryId String?     @db.Uuid
   approvedByUserId  String?      @db.Uuid
   createdAt      DateTime        @default(now())
@@ -744,4 +732,121 @@ model FinancialLedgerEntry {
   @@index([organizationId, createdAt])
   @@index([orderId])
   @@map("financial_ledger_entries")
+}
+
+// ============================================================
+// Parte 6 — Domínio 6: Bilheteira Física
+// ============================================================
+
+enum StationStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+// Posto/estação de bilheteira física (guiché), ligado a um recinto
+model BoxOfficeStation {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  venueId        String?       @db.Uuid
+  code           String        // identificação do posto, ex: "GUICHE-01"
+  name           String
+  status         StationStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  venue        Venue?        @relation(fields: [venueId], references: [id])
+  shifts       CashShift[]
+
+  @@unique([organizationId, code])
+  @@map("box_office_stations")
+}
+
+// Estados do turno de caixa
+enum ShiftStatus {
+  OPEN       // aberto
+  CLOSING    // em fecho (contagem)
+  CLOSED     // fechado operacionalmente (mesmo com diferença)
+  RECONCILED // conferido e conciliado
+}
+
+// Turno de caixa: operador, fundo inicial, vendas, diferenças e fecho.
+// Regra aprovada: é possível fechar o turno com diferença, registando a
+// divergência e encaminhando-a para análise.
+model CashShift {
+  id              String     @id @default(uuid()) @db.Uuid
+  organizationId  String     @db.Uuid
+  stationId       String     @db.Uuid
+  operatorUserId  String     @db.Uuid
+  status          ShiftStatus @default(OPEN)
+  openedAt        DateTime   @default(now())
+  openedAtLocal   DateTime
+  openingFloatCents Int      @default(0) // fundo inicial
+  totalSalesCents Int       @default(0) // vendas do turno
+  totalRefundsCents Int     @default(0) // reembolsos pagos no turno
+  expectedCents   Int       @default(0) // valor esperado = fundo + vendas − reembolsos
+  countedCents     Int?     // valor contado no fecho
+  differenceCents  Int?     // diferença = contado − esperado
+  closedAt        DateTime?
+  closedByUserId  String?   @db.Uuid // responsável pelo fecho
+  // Diferenças são registadas e encaminhadas (nunca ignoradas)
+  differenceNotes String?
+  createdAt       DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  station      BoxOfficeStation @relation(fields: [stationId], references: [id])
+  operator     User             @relation(fields: [operatorUserId], references: [id])
+  orders       Order[]
+
+  @@index([organizationId, status])
+  @@map("cash_shifts")
+}
+
+// Movimentos de caixa autorizados (entradas/saídas que não são vendas)
+enum CashMovementType {
+  CASH_IN    // entrada autorizada (ex: reforço de troco)
+  CASH_OUT   // saída autorizada (ex: entrega parcial de valores)
+  REFUND_PAID // reembolso pago em dinheiro
+}
+
+model CashMovement {
+  id            String          @id @default(uuid()) @db.Uuid
+  shiftId       String          @db.Uuid
+  type          CashMovementType
+  amountCents   Int
+  reason        String
+  authorizedByUserId String?    @db.Uuid
+  createdAt     DateTime        @default(now())
+
+  shift CashShift @relation(fields: [shiftId], references: [id])
+
+  @@index([shiftId])
+  @@map("cash_movements")
+}
+
+// Situação do dinheiro após o fecho (doc. mestra, Parte 3, secção 7)
+enum CashDepositStatus {
+  COUNTED   // contado no fecho
+  HANDED_OVER // entregue ao responsável
+  DEPOSITED // depositado no banco
+  CONFIRMED // reconhecido pelo banco
+}
+
+model CashDeposit {
+  id          String            @id @default(uuid()) @db.Uuid
+  shiftId     String            @db.Uuid
+  amountCents Int
+  status      CashDepositStatus @default(COUNTED)
+  handedToUserId String?       @db.Uuid
+  depositedAt DateTime?
+  bankReference String?
+  confirmedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  shift CashShift @relation(fields: [shiftId], references: [id])
+
+  @@index([shiftId])
+  @@map("cash_deposits")
 }
