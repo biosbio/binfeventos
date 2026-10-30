@@ -36,15 +36,28 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 7 — Domínio 7: Controlo de Acesso (Ticket, TicketTransferRequest, AccessGate, AccessEvent)
 - [x] Parte 8 — Domínio 8: Segurança e Antifraude (FraudRule, FraudAlert, SecurityIncident)
 - [x] Parte 9 — Domínios 9-11: Administração (SaasSubscription), Notificações, Relatórios (DataExport)
-- [ ] Parte 10 — Estrutura de código do monólito modular e setup do projeto
-- [ ] Parte 11 — Domínio 12: Aplicações e experiência (web responsiva)
+- [x] Parte 10 — Fundação de código: setup, erros, segurança, auditoria, sessões/guards ABAC, permissões, seed
+- [ ] Parte 11 — Módulos de negócio: users/organizations (API + MFA)
+- [ ] Parte 12 — Domínio 12: Aplicações e experiência (web responsiva)
+
+## Como executar localmente
+
+```bash
+npm install
+cp .env.example .env      # preencher DATABASE_URL
+npm run prisma:generate
+npm run prisma:migrate
+npm run db:seed
+npm run dev
+```
 
 ## Princípios estruturais
 
 Multiempresa (isolamento por organização) · Internacionalização · Integração · Segurança · Rastreabilidade · Escalabilidade · Modularidade · Integridade · Configurabilidade
 
-## Documentação por domínio
+## Documentação
 
+- [docs/parte-10-fundacao-codigo.md](docs/parte-10-fundacao-codigo.md) — fundação de código e estrutura
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
