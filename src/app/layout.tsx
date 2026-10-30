@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+import "./globals.css";
 
 export const metadata = {
   title: "BINF EVENTOS — Descubra eventos e viva experiências",
