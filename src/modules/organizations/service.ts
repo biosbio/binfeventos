@@ -14,6 +14,9 @@ import type { CreateOrgInput, InviteMemberInput } from "./schemas";
 // - Convidar exige permissão org:invite; atribuir papel, org:role:assign.
 // - Suspender organização exige dupla validação via admin central
 //   (suspensão seletiva — regra especial de segurança nº 10).
+// - Convites notificam o convidado (Domínio 10, Parte 21b):
+//   MEMBER_INVITED por EMAIL e IN_APP, com organizationId no payload
+//   (o convidado passa a conhecer a organização sem listagem).
 // ============================================================
 
 /** Cria organização e torna o criador ORG_ADMIN (aceite por definição). */
@@ -107,6 +110,12 @@ export async function inviteMember(
   });
   if (existing) throw new ConflictError("Utilizador já pertence à organização.");
 
+  const org = await prisma.organization.findUnique({
+    where: { id: ctx.organizationId },
+    select: { name: true },
+  });
+  if (!org) throw new NotFoundError("Organização");
+
   const membership = await prisma.orgMembership.create({
     data: {
       organizationId: ctx.organizationId,
@@ -117,6 +126,30 @@ export async function inviteMember(
     select: { id: true },
   });
 
+  // Domínio 10 (Parte 21b): notificar convidado por EMAIL e IN_APP.
+  // Falha de notificação NÃO desfaça o convite (risco nº 12): o envio
+  // é best-effort e fica RETRYING para o job de reprocessamento.
+  const { queueNotification } = await import("@/modules/notifications/service");
+  const notifyData = {
+    orgName: org.name,
+    roleName: input.roleName,
+    organizationId: ctx.organizationId,
+  };
+  await queueNotification({
+    userId: invitee.id,
+    type: "MEMBER_INVITED",
+    channel: "EMAIL",
+    data: notifyData,
+    idempotencyKey: `member-invited:${membership.id}`,
+  }).catch(() => undefined);
+  await queueNotification({
+    userId: invitee.id,
+    type: "MEMBER_INVITED",
+    channel: "IN_APP",
+    data: notifyData,
+    idempotencyKey: `member-invited:${membership.id}`,
+  }).catch(() => undefined);
+
   await writeAudit({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
@@ -124,7 +157,6 @@ export async function inviteMember(
     after: { email: input.email, roleName: input.roleName },
   });
 
-  // TODO (Domínio 10): notificar convidado (Notification + email)
   return { membershipId: membership.id, invitedEmail: input.email };
 }
 
