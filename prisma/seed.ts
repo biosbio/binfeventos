@@ -3,11 +3,8 @@ import { hashPassword } from "../src/shared/lib/security";
 import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
 
 // ============================================================
-// Seed: permissões + papéis de sistema + administrador inicial.
+// Seed: permissões + papéis de sistema + prestador CASH + admin.
 // Executar: npm run db:seed
-//
-// IMPORTANTE: o email/password abaixo são para AMBIENTE LOCAL.
-// Em produção, definir via variáveis ADMIN_EMAIL/ADMIN_PASSWORD.
 // ============================================================
 
 const prisma = new PrismaClient();
@@ -34,7 +31,6 @@ async function main(): Promise<void> {
       create: { name: roleName, isSystem: true, organizationId: null },
     });
 
-    // Vincula permissões ao papel (N-N via RolePermission)
     for (const code of permCodes) {
       const perm = await prisma.permission.findUnique({ where: { code } });
       if (!perm) {
@@ -50,7 +46,19 @@ async function main(): Promise<void> {
     }
   }
 
-  // 3. Administrador central inicial (apenas local/dev)
+  // 3. Prestador CASH (bilheteira física; sem chaves externas)
+  await prisma.paymentProvider.upsert({
+    where: { code: "cash" },
+    update: {},
+    create: {
+      code: "cash",
+      name: "Dinheiro (bilheteira física)",
+      country: "GLOBAL",
+      isActive: true,
+    },
+  });
+
+  // 4. Administrador central inicial (apenas local/dev)
   const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
   const adminPassword = process.env.ADMIN_PASSWORD ?? "ChangeMe!2026";
 
