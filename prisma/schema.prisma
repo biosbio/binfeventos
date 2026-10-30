@@ -85,17 +85,34 @@ model Role {
   organizationId String? @db.Uuid
 
   memberships    OrgMembership[]
+  rolePermissions RolePermission[]
 
   @@unique([name, organizationId])
   @@map("roles")
 }
 
 model Permission {
-  id     String @id @default(uuid()) @db.Uuid
-  code   String @unique
-  domain String
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique
+  domain      String
+  description String?
+
+  rolePermissions RolePermission[]
 
   @@map("permissions")
+}
+
+// Junção Role N-N Permission (SEC-02: RBAC/ABAC)
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
 }
 
 model OrgMembership {
@@ -351,7 +368,7 @@ model InventoryHold {
   expiresAt    DateTime
   releasedAt   DateTime?
   createdAt    DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  updatedAt    DateTime   @updatedAt
 
   session    EventSession @relation(fields: [sessionId], references: [id])
   ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
@@ -1120,11 +1137,6 @@ model SecurityIncident {
 // Parte 9 — Domínios 9-11: Administração, Notificações, Relatórios
 // ============================================================
 
-// --- Domínio 9: Administração central ---
-// Suspensão seletiva (regra especial de segurança): conta, evento,
-// integração ou operação podem ser suspensos seletivamente.
-
-// Assinatura SaaS (modelo de receita aprovado: comissão + assinatura)
 enum SubscriptionPlan {
   BASIC
   PROFESSIONAL
@@ -1160,9 +1172,6 @@ model SaasSubscription {
   @@map("saas_subscriptions")
 }
 
-// --- Domínio 10: Notificações ---
-// Canais: Email e SMS (integrações externas); compradores, titulares e
-// organizadores.
 enum NotificationChannel {
   EMAIL
   SMS
@@ -1221,10 +1230,6 @@ model Notification {
   @@map("notifications")
 }
 
-// --- Domínio 11: Relatórios ---
-// Indicadores comerciais, operacionais e financeiros são consultas agregadas
-// sobre os modelos existentes (sem novas tabelas no MVP). Guarda-se apenas o
-// registo de exportações controladas com link assinado e expiração.
 enum ExportStatus {
   REQUESTED
   PROCESSING
@@ -1251,13 +1256,3 @@ model DataExport {
   @@index([organizationId, status])
   @@map("data_exports")
 }
-
-// Indicadores essenciais do MVP (calculados em tempo real):
-// - Vendas por evento/sessão (Order, OrderLine)
-// - Receita por canal (Order.channel)
-// - Comissões por organização (Order.commissionCents)
-// - Taxa de ocupação de lugares (Seat)
-// - Entradas e recusas por portaria (AccessEvent)
-// - Diferenças de caixa (CashShift.differenceCents)
-// - Alertas de fraude abertos (FraudAlert)
-// - Pagamentos pendentes (Payment.status)
