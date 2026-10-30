@@ -44,6 +44,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 15 — Módulo finance: reembolsos segregados, liquidações com dupla aprovação, livro-razão imutável
 - [x] Parte 16 — Web responsiva: catálogo público, detalhe do evento, login (MFA), registo
 - [x] Parte 17 — Ecrãs autenticados: minha conta, bilhete com QR SVG, checkout 3 passos, portaria, painel
+- [x] Parte 18 — Bugfix CASH (emissão de bilhetes na bilheteira), adaptador sandbox com HMAC, testes
 
 ## Regra de ouro (segurança)
 
@@ -52,7 +53,7 @@ identificadores e quantidades; preços, taxas, totais, prazos de expiração e
 segredos são sempre calculados/gerados no servidor e nunca devolvidos em
 consultas (`select` explícito em todas as APIs). A web não persiste
 passwords, tokens de sessão ou QR no navegador — a sessão vive em cookie
-HttpOnly gerido pelo backend, e o QR do bilhete chega apenas como imagem SVG
+HttpOnly gerado pelo backend, e o QR do bilhete chega apenas como imagem SVG
 gerada no servidor.
 
 ## Como executar localmente
@@ -150,6 +151,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-15-modulo-finance.md](docs/parte-15-modulo-finance.md) — reembolsos, liquidações, livro-razão
 - [docs/parte-16-web-responsiva.md](docs/parte-16-web-responsiva.md) — interface web pública
 - [docs/parte-17-ecras-autenticados.md](docs/parte-17-ecras-autenticados.md) — ecrãs autenticados
+- [docs/parte-18-adaptador-sandbox-ci.md](docs/parte-18-adaptador-sandbox-ci.md) — bugfix CASH, sandbox, CI
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
