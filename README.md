@@ -38,7 +38,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 9 — Domínios 9-11: Administração (SaasSubscription), Notificações, Relatórios (DataExport)
 - [x] Parte 10 — Fundação de código: setup, erros, segurança, auditoria, sessões/guards ABAC, permissões, seed
 - [x] Parte 11 — Módulos users + organizations: registo, login, MFA TOTP, orgs, convites, papéis, testes
-- [ ] Parte 12 — Domínio 2 em código: eventos/sessões (máquina de estados)
+- [x] Parte 12 — Módulo events: CRUD, sessões, recintos, máquina de estados com guards e testes
 - [ ] Parte 13 — Domínios 3-4 em código: inventário transacional + checkout
 - [ ] Parte 14 — Domínios 5-7 em código: pagamentos, caixa, controlo de acesso
 - [ ] Parte 15 — Domínio 12: Aplicações e experiência (web responsiva)
@@ -71,6 +71,13 @@ npm run test             # testes de caracterização (vitest)
 | POST | `/api/organizations/members/invite` | Convidar membro | `org:invite` |
 | POST | `/api/organizations/members/accept` | Aceitar convite | autenticado |
 | POST | `/api/organizations/members/role` | Mudar papel | `org:role:assign` |
+| POST | `/api/events/create` | Criar evento (começa DRAFT) | `event:create` |
+| GET | `/api/events` | Listar eventos (`?status=`) | `event:read` |
+| GET | `/api/events/{id}` | Detalhe do evento | `event:read` |
+| PATCH | `/api/events/{id}` | Editar evento | `event:update` |
+| POST | `/api/events/{id}/sessions` | Adicionar sessão | `session:manage` |
+| POST | `/api/events/{id}/transition` | Transição de estado (por destino) | `event:publish` / `event:cancel` / `org:manage` |
+| POST | `/api/events/venues` | Criar recinto | `venue:manage` |
 
 ## Princípios estruturais
 
@@ -80,6 +87,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 
 - [docs/parte-10-fundacao-codigo.md](docs/parte-10-fundacao-codigo.md) — fundação de código e estrutura
 - [docs/parte-11-modulos-users-organizations.md](docs/parte-11-modulos-users-organizations.md) — módulos de negócio
+- [docs/parte-12-modulo-events.md](docs/parte-12-modulo-events.md) — módulo events
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
