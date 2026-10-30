@@ -1,3 +1,4 @@
+import { authenticator } from "otplib";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../src/shared/lib/security";
 import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
@@ -73,23 +74,33 @@ async function main(): Promise<void> {
   });
 
   // 4. Administrador central inicial (apenas local/dev)
+  // SEC-01: MFA obrigatório para admin — com segredo TOTP REAL.
+  // (Bug corrigido: mfaEnabled sem mfaSecret tornava o login impossível.)
   const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
   const adminPassword = process.env.ADMIN_PASSWORD ?? "ChangeMe!2026";
+  const adminSecret = authenticator.generateSecret();
 
-  const admin = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
     create: {
       fullName: "Administrador da Plataforma",
       email: adminEmail,
       passwordHash: await hashPassword(adminPassword),
-      mfaEnabled: true, // SEC-01: MFA obrigatório para admin central
+      mfaEnabled: true,
+      mfaSecret: adminSecret,
       status: "ACTIVE",
     },
   });
 
-  console.log(`Seed concluído. Admin local: ${admin.email}`);
-  console.log("AVISO: em produção, definir ADMIN_EMAIL/ADMIN_PASSWORD/SANDBOX_WEBHOOK_SECRET.");
+  const otpauthUrl = authenticator.keyuri(adminEmail, "BINF EVENTOS", adminSecret);
+  console.log(`Seed concluído. Admin local: ${adminEmail}`);
+  console.log(`Admin MFA (registe na sua app autenticadora — apenas DEV):`);
+  console.log(otpauthUrl);
+  console.log(
+    "AVISO: em produção, criar o admin por fluxo próprio com MFA interativo; " +
+      "nunca imprimir segredos na consola."
+  );
 }
 
 main()
