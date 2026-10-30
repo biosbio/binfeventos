@@ -42,14 +42,17 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 13 — Módulos inventory + sales: reservas com FOR UPDATE, idempotência, checkout 100% server-side
 - [x] Parte 14 — Módulos payments + access + boxoffice: adaptadores, Opção B/C, QR rotativo, turnos de caixa
 - [x] Parte 15 — Módulo finance: reembolsos segregados, liquidações com dupla aprovação, livro-razão imutável
-- [ ] Parte 16 — Domínio 12: Aplicações e experiência (web responsiva)
+- [x] Parte 16 — Web responsiva: catálogo público, detalhe do evento, login (MFA), registo
+- [ ] Parte 17 — Ecrãs autenticados: minha conta (bilhetes+QR), painel organizador, portaria, checkout
 
 ## Regra de ouro (segurança)
 
 **Senhas e dados sensíveis ficam no backend.** O cliente envia apenas
 identificadores e quantidades; preços, taxas, totais, prazos de expiração e
 segredos são sempre calculados/gerados no servidor e nunca devolvidos em
-consultas (`select` explícito em todas as APIs).
+consultas (`select` explícito em todas as APIs). A web não persiste
+passwords, tokens de sessão ou QR no navegador — a sessão vive em cookie
+HttpOnly gerido pelo backend.
 
 ## Como executar localmente
 
@@ -62,6 +65,15 @@ npm run db:seed
 npm run dev
 npm run test             # testes de caracterização (vitest)
 ```
+
+## Páginas web
+
+| Rota | Descrição | Tipo |
+|---|---|---|
+| `/` | Catálogo público de eventos publicados | Server Component |
+| `/eventos/{slug}` | Detalhe: sessões, tipos de bilhete, regras | Server Component |
+| `/login` | Login com MFA (campo dinâmico) | Client Component |
+| `/register` | Registo (validação forte no servidor) | Client Component |
 
 ## Endpoints disponíveis
 
@@ -130,6 +142,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-13-inventario-checkout.md](docs/parte-13-inventario-checkout.md) — inventário transacional + checkout
 - [docs/parte-14-pagamentos-caixa-acesso.md](docs/parte-14-pagamentos-caixa-acesso.md) — pagamentos, caixa, acesso
 - [docs/parte-15-modulo-finance.md](docs/parte-15-modulo-finance.md) — reembolsos, liquidações, livro-razão
+- [docs/parte-16-web-responsiva.md](docs/parte-16-web-responsiva.md) — interface web responsiva
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
