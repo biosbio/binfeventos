@@ -11,6 +11,7 @@ export function SiteHeader() {
         <Link href="/#eventos">Eventos</Link>
         <Link href="/#como-funciona">Como funciona</Link>
         <Link href="/painel">Painel</Link>
+        <Link href="/financas">Finanças</Link>
         <Link href="/portaria">Portaria</Link>
       </nav>
       <div className="nav-actions">
