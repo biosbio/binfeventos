@@ -1,5 +1,6 @@
 import { registerAdapter } from "../adapter";
 import { SandboxAdapter } from "./sandbox";
+import { MulticaixaExpressAdapter } from "./multicaixa-express";
 
 // ============================================================
 // Bootstrap dos adaptadores — importar UMA vez no arranque
@@ -9,4 +10,5 @@ import { SandboxAdapter } from "./sandbox";
 
 export function registerAllAdapters(): void {
   registerAdapter(new SandboxAdapter());
+  registerAdapter(new MulticaixaExpressAdapter());
 }
