@@ -39,6 +39,11 @@ model Organization {
   venues      Venue[]
   ticketTypes TicketType[]
   orders      Order[]
+  payments    Payment[]
+  refunds     Refund[]
+  settlements Settlement[]
+  ledgerEntries FinancialLedgerEntry[]
+  reserves    FinancialReserve[]
 
   @@map("organizations")
 }
@@ -74,7 +79,7 @@ model Role {
 
 model Permission {
   id     String @id @default(uuid()) @db.Uuid
-  code   String @unique // ex: "event:create"
+  code   String @unique
   domain String
 
   @@map("permissions")
@@ -255,6 +260,7 @@ model TicketType {
   holds          InventoryHold[]
   seats          Seat[]
   orderLines     OrderLine[]
+  orderAttendees OrderAttendee[]
 
   @@index([eventId])
   @@map("ticket_types")
@@ -383,53 +389,47 @@ model Seat {
 // Parte 4 — Domínio 4: Venda e Checkout
 // ============================================================
 
-// Estados da encomenda (documentação mestra, Parte 3, secção 1)
 enum OrderStatus {
-  DRAFT                  // Rascunho
-  RESERVED                // Reservada (inventário protegido)
-  PENDING_PAYMENT         // Pagamento pendente
-  UNDER_REVIEW            // Em análise (ocorrência financeira)
-  CONFIRMED               // Venda validada
-  PARTIALLY_REFUNDED      // Parcialmente reembolsada
-  REFUNDED                // Reembolsada
-  CANCELLED               // Cancelada
-  EXPIRED                 // Expirada
-  DISPUTED                // Em disputa
+  DRAFT
+  RESERVED
+  PENDING_PAYMENT
+  UNDER_REVIEW
+  CONFIRMED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  CANCELLED
+  EXPIRED
+  DISPUTED
 }
 
-// Origem da venda — cada venda regista a sua origem (doc. mestra, secção 4)
 enum SalesChannel {
-  MARKETPLACE          // venda online ao público
-  ORGANIZER_PRIVATE    // ambiente privado do organizador
-  BOX_OFFICE          // bilheteira física
-  OTHER               // origens futuras autorizadas
+  MARKETPLACE
+  ORGANIZER_PRIVATE
+  BOX_OFFICE
+  OTHER
 }
 
-// Encomenda: núcleo de conversão da intenção de compra
 model Order {
   id             String      @id @default(uuid()) @db.Uuid
   organizationId String      @db.Uuid
-  orderNumber    String      @unique // referência humana legível
-  buyerUserId    String?     @db.Uuid // comprador autenticado (opcional no marketplace)
-  // Dados do comprador (pode não ter conta)
+  orderNumber    String      @unique
+  buyerUserId    String?     @db.Uuid
   buyerName      String
   buyerEmail     String
   buyerPhone     String?
   status         OrderStatus @default(DRAFT)
   channel        SalesChannel @default(MARKETPLACE)
-  // Valores calculados SEMPRE no servidor (nunca confiáveis do cliente)
   subtotalCents  Int         @default(0)
   discountCents  Int         @default(0)
   serviceFeeCents Int        @default(0)
   taxCents       Int         @default(0)
-  commissionCents Int        @default(0) // receita da plataforma
-  totalCents     Int         @default(0) // total a pagar
+  commissionCents Int        @default(0)
+  totalCents     Int         @default(0)
   currency       String      @default("AOA")
-  // Idempotência do checkout: uma intenção não gera encomendas duplicadas
   checkoutIdempotencyKey String? @unique
-  holdId         String?    @db.Uuid // reserva de inventário associada
-  sessionId      String?    @db.Uuid // sessão principal (encomendas mono-sessão no MVP)
-  expiresAt      DateTime?  // prazo da reserva
+  holdId         String?    @db.Uuid
+  sessionId      String?    @db.Uuid
+  expiresAt      DateTime?
   confirmedAt    DateTime?
   cancelledAt    DateTime?
   createdAt       DateTime   @default(now())
@@ -440,20 +440,21 @@ model Order {
   session      EventSession? @relation(fields: [sessionId], references: [id])
   lines        OrderLine[]
   attendees    OrderAttendee[]
+  payments     Payment[]
+  refunds      Refund[]
 
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
   @@map("orders")
 }
 
-// Linha da encomenda: tipo de bilhete + quantidade + preço unitário aplicado
 model OrderLine {
   id           String   @id @default(uuid()) @db.Uuid
   orderId      String   @db.Uuid
   ticketTypeId String   @db.Uuid
   batchId      String   @db.Uuid
   quantity     Int
-  unitPriceCents Int     // preço unitário aplicado (do lote ou base)
+  unitPriceCents Int
   lineSubtotalCents Int
   createdAt    DateTime @default(now())
 
@@ -464,19 +465,16 @@ model OrderLine {
   @@map("order_lines")
 }
 
-// Titular identificado obrigatoriamente (doc. mestra, secção 12):
-// comprador ≠ titular; cada bilhete associado a um participante identificado.
-// Não é obrigatório criar conta para cada titular.
 model OrderAttendee {
   id          String   @id @default(uuid()) @db.Uuid
   orderId     String   @db.Uuid
   ticketTypeId String   @db.Uuid
-  fullName    String   // obrigatório
+  fullName    String
   email       String?
   phone       String?
-  documentType String? // quando exigido (BI, passaporte...)
-  documentNumber String? // quando exigido
-  extraData   Json?    // apenas quando justificado
+  documentType String?
+  documentNumber String?
+  extraData   Json?
   createdAt   DateTime @default(now())
 
   order      Order      @relation(fields: [orderId], references: [id])
@@ -484,4 +482,266 @@ model OrderAttendee {
 
   @@index([orderId])
   @@map("order_attendees")
+}
+
+// ============================================================
+// Parte 5 — Domínio 5: Pagamentos e Finanças
+// ============================================================
+
+// Métodos de pagamento suportados (doc. mestra: cartões, Mobile Money,
+// carteiras digitais, transferências, dinheiro na bilheteira física)
+enum PaymentMethodType {
+  CARD
+  MOBILE_MONEY
+  DIGITAL_WALLET
+  BANK_TRANSFER
+  CASH
+}
+
+// Prestador de pagamento por mercado (adaptadores substituíveis)
+model PaymentProvider {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique // ex: "stripe", "multicaixa"
+  name        String
+  country     String
+  isActive    Boolean @default(true)
+  // Configuração normalizada do adaptador (chaves via gestor de segredos)
+  adapterConfig Json?
+  createdAt   DateTime @default(now())
+
+  payments    Payment[]
+
+  @@map("payment_providers")
+}
+
+// Estados do pagamento (doc. mestra, Parte 3, secção 2)
+enum PaymentStatus {
+  CREATED
+  INITIATED
+  AWAITING_AUTHORIZATION
+  PROCESSING
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  EXPIRED
+  UNDER_REVIEW
+  REFUNDED
+  PARTIALLY_REFUNDED
+  DISPUTED
+}
+
+// Pagamento: uma encomenda pode ter múltiplas tentativas controladas
+// (Decisão aprovada — Opção B), mas apenas uma confirmação válida.
+model Payment {
+  id               String        @id @default(uuid()) @db.Uuid
+  organizationId   String        @db.Uuid
+  orderId          String        @db.Uuid
+  providerId       String        @db.Uuid
+  method           PaymentMethodType
+  status           PaymentStatus @default(CREATED)
+  amountCents      Int
+  currency         String        @default("AOA")
+  providerRef      String?       // identificador normalizado da transação no prestador
+  providerRawPayload Json?       // payload/webhook bruto (evidência)
+  confirmedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  order        Order           @relation(fields: [orderId], references: [id])
+  provider     PaymentProvider @relation(fields: [providerId], references: [id])
+  attempts     PaymentAttempt[]
+
+  @@index([orderId, status])
+  @@index([providerRef])
+  @@map("payments")
+}
+
+// Nova tentativa de pagamento (Opção B): id único, mesma encomenda,
+// histórico preservado, sem cobranças duplicadas.
+enum AttemptStatus {
+  ACTIVE      // tentativa em curso; se confirmada, as restantes são bloqueadas
+  BLOCKED     // bloqueada porque outra tentativa foi confirmada
+  COMPLETED   // tentativa que resultou em confirmação
+  FAILED
+}
+
+model PaymentAttempt {
+  id             String        @id @default(uuid()) @db.Uuid
+  paymentId      String        @db.Uuid
+  attemptNumber  Int
+  status         AttemptStatus @default(ACTIVE)
+  idempotencyKey String?       @unique
+  providerRef    String?
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  notes          String?
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@unique([paymentId, attemptNumber])
+  @@map("payment_attempts")
+}
+
+// Reembolsos: totais e parciais, com rastreabilidade
+enum RefundStatus {
+  REQUESTED
+  UNDER_ANALYSIS
+  APPROVED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+model Refund {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  orderId        String       @db.Uuid
+  paymentId      String       @db.Uuid
+  amountCents    Int
+  reason         String
+  status         RefundStatus @default(REQUESTED)
+  approvedByUserId String?    @db.Uuid // segregação: quem solicita ≠ quem aprova
+  requestedByUserId String?   @db.Uuid
+  providerRef    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  order        Order         @relation(fields: [orderId], references: [id])
+  payment      Payment       @relation(fields: [paymentId], references: [id])
+
+  @@index([orderId])
+  @@map("refunds")
+}
+
+// Chargeback: contestação pelo titular do meio de pagamento
+enum ChargebackStatus {
+  NOTIFIED
+  EVIDENCE_GATHERING
+  SUBMITTED
+  WON
+  LOST
+}
+
+model Chargeback {
+  id            String           @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  paymentId     String           @db.Uuid
+  providerRef   String?
+  amountCents   Int
+  deadlineAt    DateTime? // prazo de resposta do prestador
+  status        ChargebackStatus @default(NOTIFIED)
+  decisionNotes String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("chargebacks")
+}
+
+// Liquidação: disponibilização dos valores devidos ao organizador
+enum SettlementStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model Settlement {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  periodStart    DateTime
+  periodEnd      DateTime
+  grossCents     Int              @default(0) // vendas brutas
+  commissionCents Int             @default(0) // receita da plataforma
+  providerFeeCents Int            @default(0) // taxas do prestador
+  refundedCents   Int             @default(0) // reembolsos
+  chargebackCents Int             @default(0) // contestações
+  netCents       Int              @default(0) // valor líquido
+  reservedCents  Int              @default(0) // retido em reserva
+  payableCents   Int              @default(0) // saldo disponível a liquidar
+  status         SettlementStatus @default(PENDING)
+  preparedByUserId  String?      @db.Uuid
+  approvedByUserId  String?      @db.Uuid // dupla aprovação
+  paidAt         DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
+  @@map("settlements")
+}
+
+// Reservas financeiras baseadas no risco
+enum ReserveStatus {
+  ACTIVE
+  PARTIALLY_RELEASED
+  RELEASED
+}
+
+model FinancialReserve {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  settlementId  String?       @db.Uuid
+  reason         String
+  amountCents    Int
+  status         ReserveStatus @default(ACTIVE)
+  releaseConditions String?
+  releasedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
+  @@map("financial_reserves")
+}
+
+// Livro-razão financeiro: histórico IMUTÁVEL.
+// Nunca apagar/sobrescrever lançamentos confirmados; correções = lançamentos
+// compensatórios. Registos mínimos exigidos pela doc. mestra, secção 11.
+enum LedgerEntryType {
+  SALE
+  PAYMENT
+  COMMISSION
+  PROVIDER_FEE
+  REFUND
+  CHARGEBACK
+  SETTLEMENT
+  RESERVE
+  RESERVE_RELEASE
+  DEPOSIT
+  CASH_DIFFERENCE
+  ADJUSTMENT
+}
+
+model FinancialLedgerEntry {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  type           LedgerEntryType
+  amountCents    Int             // positivo (débito) / negativo (crédito)
+  currency       String          @default("AOA")
+  orderId        String?         @db.Uuid
+  paymentId      String?         @db.Uuid
+  settlementId   String?         @db.Uuid
+  refundId       String?         @db.Uuid
+  description    String?
+  // Entradas compensatórias referenciam o lançamento original
+  compensatesEntryId String?     @db.Uuid
+  approvedByUserId  String?      @db.Uuid
+  createdAt      DateTime        @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([orderId])
+  @@map("financial_ledger_entries")
 }
