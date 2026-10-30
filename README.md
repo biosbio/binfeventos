@@ -45,6 +45,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 16 — Web responsiva: catálogo público, detalhe do evento, login (MFA), registo
 - [x] Parte 17 — Ecrãs autenticados: minha conta, bilhete com QR SVG, checkout 3 passos, portaria, painel
 - [x] Parte 18 — Bugfix CASH (emissão de bilhetes na bilheteira), adaptador sandbox com HMAC, testes
+- [x] Parte 19 — Bugfixes MFA/lotes, gestão de estado de lotes, suíte E2E Playwright (fluxo completo + segurança)
 
 ## Regra de ouro (segurança)
 
@@ -66,6 +67,10 @@ npm run prisma:migrate
 npm run db:seed
 npm run dev
 npm run test             # testes de caracterização (vitest)
+
+# E2E (Playwright) — requer seed aplicado
+npx playwright install chromium
+npm run test:e2e          # arranca o dev server automaticamente
 ```
 
 ## Páginas web
@@ -113,6 +118,7 @@ npm run test             # testes de caracterização (vitest)
 | POST | `/api/marketplace/orders/{id}/cancel` | Cancelar encomenda | comprador / `order:cancel` |
 | POST | `/api/catalog/ticket-types` | Criar tipo de bilhete | `ticketType:manage` |
 | POST | `/api/catalog/batches` | Criar lote (+ inventário) | `batch:manage` |
+| POST | `/api/catalog/batches/status` | Abrir/pausar/fechar lote | `batch:manage` |
 | POST | `/api/catalog/run-expiration` | Job: expirar reservas | `inventory:read` (cron) |
 | POST | `/api/payments/initiate` | Iniciar pagamento | comprador / `boxoffice:sell` |
 | POST | `/api/payments/webhook/{code}` | Webhook do prestador | assinatura validada |
@@ -152,6 +158,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-16-web-responsiva.md](docs/parte-16-web-responsiva.md) — interface web pública
 - [docs/parte-17-ecras-autenticados.md](docs/parte-17-ecras-autenticados.md) — ecrãs autenticados
 - [docs/parte-18-adaptador-sandbox-ci.md](docs/parte-18-adaptador-sandbox-ci.md) — bugfix CASH, sandbox, CI
+- [docs/parte-19-e2e-bugfixes.md](docs/parte-19-e2e-bugfixes.md) — bugfixes MFA/lotes + E2E Playwright
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
