@@ -1,0 +1,27 @@
+# Dependências do projeto
+node_modules/
+
+# Variáveis de ambiente
+.env
+.env.local
+.env.production
+
+# Build
+.next/
+dist/
+build/
+
+# Prisma gerado
+prisma/generated/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
