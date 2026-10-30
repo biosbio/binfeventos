@@ -24,6 +24,8 @@ import type { CreateBatchInput, CreateTicketTypeInput, HoldRequestInput } from "
 // 4. Estado VERIFYING protege o inventário enquanto o pagamento
 //    não tem resultado definitivo (nunca expira automaticamente).
 // 5. Expiração de reservas por job periódico (releaseExpiredHolds).
+// 6. Estados do lote geridos por rota auditada (SCHEDULED/OPEN/
+//    PAUSED/CLOSED) — sem isso os lotes nunca ficavam à venda.
 // ============================================================
 
 /** Duração padrão da reserva temporária (10 minutos). */
@@ -128,6 +130,50 @@ export async function createBatch(ctx: AuthContext, input: CreateBatchInput) {
   });
 
   return batch;
+}
+
+/**
+ * Transição de estado do lote (SCHEDULED → OPEN → PAUSED → OPEN → CLOSED).
+ * Sem isto os lotes nunca ficavam à venda (bug corrigido na Parte 19).
+ * SOLD_OUT é automático: só o job/sistema o define; manualmente apenas
+ * OPEN/PAUSED/CLOSED.
+ */
+export async function transitionBatch(
+  ctx: AuthContext,
+  batchId: string,
+  to: "OPEN" | "PAUSED" | "CLOSED"
+) {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+
+  const tt = await prisma.ticketType.findFirst({
+    where: { batches: { some: { id: batchId } } },
+    select: { organizationId: true },
+  });
+  if (!tt || tt.organizationId !== ctx.organizationId) throw new NotFoundError("Lote");
+
+  const batch = await prisma.ticketBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new NotFoundError("Lote");
+  if (batch.status === to) throw new ConflictError(`Lote já está ${to}.`);
+  if (batch.status === "SOLD_OUT" && to !== "CLOSED") {
+    throw new BusinessRuleError("Lote esgotado: apenas pode ser encerrado.");
+  }
+
+  // Abrir exige janela de comercialização válida (datas validadas no servidor)
+  if (to === "OPEN" && (batch.endsAt.getTime() <= Date.now())) {
+    throw new BusinessRuleError("Janela de comercialização já terminou.");
+  }
+
+  await prisma.ticketBatch.update({ where: { id: batchId }, data: { status: to } });
+
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "batch.status_changed",
+    before: { status: batch.status },
+    after: { status: to },
+  });
+
+  return { batchId, status: to };
 }
 
 /** Consultar disponibilidade (sem valores sensíveis; leitura pública do marketplace). */
@@ -325,7 +371,7 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
 
 /**
  * Job: expirar reservas vencidas.
-// Apenas estado RESERVED expira; PENDING_PAYMENT e VERIFYING permanecem
+ * Apenas estado RESERVED expira; PENDING_PAYMENT e VERIFYING permanecem
  * protegidos até o pagamento ter resultado definitivo (doc. mestre).
  * Chamar periodicamente (cron/worker) — idempotente.
  */
