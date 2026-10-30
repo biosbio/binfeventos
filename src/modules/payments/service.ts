@@ -12,6 +12,7 @@ import type { AuthContext } from "@/shared/auth";
 import { getAdapter, type ProviderResultStatus } from "./adapter";
 import type { InitiatePaymentInput, ManualReviewInput } from "./schemas";
 import { markHoldVerifying } from "@/modules/inventory/service";
+import { notifyPaymentConfirmed } from "./notify";
 
 // ============================================================
 // Módulo payments — orquestração (Domínio 5).
@@ -24,6 +25,8 @@ import { markHoldVerifying } from "@/modules/inventory/service";
 //   por operador autorizado exige evidência escrita; ninguém marca
 //   como paga sem evidência.
 // - Emissão de bilhetes apenas após confirmação idempotente.
+// - Parte 21b (Domínio 10): confirmação notifica o comprador
+//   (PAYMENT_CONFIRMED + TICKETS_ISSUED) via ./notify (best-effort).
 // ============================================================
 
 const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
@@ -242,6 +245,9 @@ export async function confirmPayment(providerRef: string, rawPayload: unknown): 
   const { issueTicketsForOrder } = await import("@/modules/access/service");
   await issueTicketsForOrder(payment.orderId);
 
+  // Parte 21b: notificar comprador (best-effort, após emissão)
+  await notifyPaymentConfirmed(payment.orderId, payment.id);
+
   await writeAudit({
     organizationId: payment.organizationId,
     actorUserId: null,
@@ -351,6 +357,9 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
     });
     const { issueTicketsForOrder } = await import("@/modules/access/service");
     await issueTicketsForOrder(payment.orderId);
+
+    // Parte 21b: notificar comprador (best-effort)
+    await notifyPaymentConfirmed(payment.orderId, payment.id);
   } else {
     await prisma.payment.update({
       where: { id: payment.id },
