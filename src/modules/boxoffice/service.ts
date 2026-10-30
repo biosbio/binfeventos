@@ -17,12 +17,15 @@ import type { CreateOrderInput } from "@/modules/sales/schemas";
 // 1. Venda presencial usa o MESMO motor de encomendas — o
 //    inventário central é atualizado imediatamente (Order.channel
 //    = BOX_OFFICE, Order.shiftId liga a venda ao turno).
-// 2. Turno regista operador, fundo inicial, vendas, reembolsos,
-//    movimentos autorizados, esperado, contado, diferença e
-//    responsável pelo fecho.
-// 3. Fecho com diferença é PERMITIDO: divergência registada
-//    (differenceCents + notes) e encaminhada para análise — nunca
-//    ignorada; gera lançamento CASH_DIFFERENCE no livro-razão.
+// 2. Pagamento a dinheiro segue o MESMO fluxo de confirmação
+//    do módulo payments (INITIATED → confirmPayment) para que a
+//    encomenda seja confirmada, o hold consumido e os bilhetes
+//    emitidos de forma idempotente.
+// 3. Turno regista operador, fundo inicial, vendas, movimentos
+//    autorizados, esperado, contado, diferença e responsável.
+// 4. Fecho com diferença é PERMITIDO: divergência registada
+//    (differenceCents + notes), lançamento CASH_DIFFERENCE no
+//    livro-razão e depósito em COUNTED — nunca ignorada.
 // ============================================================
 
 /** Escopo: posto da organização do contexto. */
@@ -71,7 +74,8 @@ export async function openShift(ctx: AuthContext, input: OpenShiftInput) {
 
 /**
  * Venda presencial: cria encomenda no motor central com canal
- * BOX_OFFICE e associa ao turno aberto do operador.
+ * BOX_OFFICE e confirma pagamento a dinheiro pelo fluxo normal
+ * (INITIATED → confirmPayment), emitindo os bilhetes.
  */
 export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput) {
   if (!ctx.permissions.has("boxoffice:sell")) throw new ForbiddenError("boxoffice:sell");
@@ -95,7 +99,10 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
     buyerEmail: input.buyerEmail,
     attendees: input.attendees,
   };
-  const order = await createOrder({ ...ctx, permissions: new Set([...ctx.permissions, "order:create"]) }, checkoutInput);
+  const order = await createOrder(
+    { ...ctx, permissions: new Set([...ctx.permissions, "order:create"]) },
+    checkoutInput
+  );
 
   // Marca canal BOX_OFFICE e liga ao turno
   await prisma.order.update({
@@ -103,31 +110,52 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
     data: { channel: "BOX_OFFICE", shiftId: shift.id },
   });
 
-  // Pagamento a dinheiro: cria Payment CASH e confirma de imediato
+  // Pagamento a dinheiro: prestador CASH (seed), mesmo fluxo de confirmação
   const provider = await prisma.paymentProvider.findFirst({
     where: { code: "cash", isActive: true },
   });
-  if (!provider) throw new NotFoundError("Prestador CASH (seed necessário).");
+  if (!provider) throw new NotFoundError("Prestador CASH (executar seed).");
 
+  // Cria em INITIATED com providerRef próprio; confirmPayment emite bilhetes
   const payment = await prisma.payment.create({
     data: {
       organizationId: ctx.organizationId!,
       orderId: order.orderId,
       providerId: provider.id,
       method: "CASH",
-      status: "CONFIRMED",
+      status: "INITIATED",
       amountCents: order.totalCents,
       currency: order.currency,
-      confirmedAt: new Date(),
     },
+    select: { id: true },
   });
+  const providerRef = `cash-${payment.id}`;
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: { providerRef },
+  });
+
+  // Confirmação idempotente: encomenda CONFIRMED + hold consumido
+  // + inventário vendido + bilhetes emitidos
   const { confirmPayment } = await import("@/modules/payments/service");
-  await confirmPayment(`cash-${payment.id}`, null);
+  await confirmPayment(providerRef, { source: "box_office_cash", shiftId: shift.id });
 
   // Atualiza caixa esperado do turno
   await prisma.cashShift.update({
     where: { id: shift.id },
     data: { totalSalesCents: { increment: order.totalCents } },
+  });
+
+  await writeAudit({
+    organizationId: ctx.organizationId!,
+    actorUserId: ctx.userId,
+    action: "payment.confirmed",
+    after: sanitizeForAudit({
+      paymentId: payment.id,
+      orderId: order.orderId,
+      method: "CASH",
+      shiftId: shift.id,
+    }),
   });
 
   return order;
