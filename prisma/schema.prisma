@@ -35,6 +35,7 @@ model Organization {
   memberships OrgMembership[]
   sessions    Session[]
   auditLogs   AuditLog[]
+  events      Event[]
 
   @@map("organizations")
 }
@@ -118,4 +119,92 @@ model AuditLog {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@map("audit_logs")
+}
+
+// ============================================================
+// Parte 2 — Domínio 2: Eventos e Sessões
+// ============================================================
+
+// Estados do ciclo de vida do evento (conforme documentação mestra)
+enum EventStatus {
+  DRAFT          // Em preparação
+  PUBLISHED      // Publicado
+  SUSPENDED      // Suspenso
+  SOLD_OUT       // Esgotado
+  POSTPONED      // Adiado
+  CANCELLED      // Cancelado
+  COMPLETED      // Concluído
+  CLOSED         // Encerrado
+}
+
+enum EventCategory {
+  CONCERT
+  CONFERENCE
+  SPORT
+  THEATER
+  FESTIVAL
+  WORKSHOP
+  OTHER
+}
+
+// Recinto/localização física onde o evento decorre
+model Venue {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  name           String
+  address        String?
+  city           String?
+  country        String  @default("AO")
+  capacity       Int?
+  mapUrl         String?
+  createdAt      DateTime @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  sessions     EventSession[]
+
+  @@map("venues")
+}
+
+// Evento: unidade comercial e de divulgação
+model Event {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  slug           String
+  name           String
+  description    String?
+  category       EventCategory @default(OTHER)
+  coverImageUrl  String?
+  responsibleUserId String?    @db.Uuid
+  status         EventStatus  @default(DRAFT)
+  // Regras de entrada e condições comerciais
+  entryRules     String?
+  terms          String?
+  publishedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  sessions     EventSession[]
+
+  @@unique([organizationId, slug])
+  @@map("events")
+}
+
+// Sessão: data/horário concreto do evento (evento de data única ou múltiplas sessões)
+model EventSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  eventId   String   @db.Uuid
+  venueId   String?  @db.Uuid
+  name      String?  // ex: "Noite 1" (opcional para sessões únicas)
+  startsAt  DateTime
+  endsAt    DateTime
+  // Abertura e fecho de portas
+  doorsOpenAt  DateTime?
+  createdAt DateTime @default(now())
+
+  event Event  @relation(fields: [eventId], references: [id])
+  venue Venue? @relation(fields: [venueId], references: [id])
+
+  @@index([eventId, startsAt])
+  @@map("event_sessions")
 }
