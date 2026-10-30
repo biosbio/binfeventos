@@ -11,7 +11,7 @@ import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import { getAdapter, type ProviderResultStatus } from "./adapter";
 import type { InitiatePaymentInput, ManualReviewInput } from "./schemas";
-import { confirmHold, markHoldVerifying } from "@/modules/inventory/service";
+import { markHoldVerifying } from "@/modules/inventory/service";
 
 // ============================================================
 // Módulo payments — orquestração (Domínio 5).
@@ -23,8 +23,7 @@ import { confirmHold, markHoldVerifying } from "@/modules/inventory/service";
 //   InventoryHold.VERIFYING (inventário protegido); análise manual
 //   por operador autorizado exige evidência escrita; ninguém marca
 //   como paga sem evidência.
-// - Emissão de bilhetes apenas após confirmação idempotente
-//   (chama tickets.service no mesmo fluxo).
+// - Emissão de bilhetes apenas após confirmação idempotente.
 // ============================================================
 
 const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
@@ -64,11 +63,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     where: { idempotencyKey: attemptKey },
   });
   if (existingAttempt) {
-    const p = await prisma.payment.findUnique({
-      where: { id: existingAttempt.paymentId },
-      select: { id: true, status: true },
-    });
-    return { paymentId: p?.id, attemptId: existingAttempt.id, alreadyStarted: true };
+    return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
   // Payment da encomenda (um por prestador; tentativas dentro dele)
@@ -76,7 +71,6 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     where: { orderId: order.id, providerId: provider.id },
   });
   if (!payment) {
-    const attemptCount = 0;
     payment = await prisma.payment.create({
       data: {
         organizationId: order.organizationId,
@@ -89,10 +83,8 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
         currency: order.currency,
       },
     });
-    void attemptCount;
   }
 
-  // Verifica montante: prestador cobra o total da encomenda
   const nextAttemptNumber =
     (await prisma.paymentAttempt.count({ where: { paymentId: payment.id } })) + 1;
 
@@ -106,16 +98,17 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     adapterConfig: (provider.adapterConfig ?? {}) as Record<string, unknown>,
   });
 
+  const paymentId = payment.id;
   await prisma.$transaction(async (tx) => {
-    // Bloqueia tentativas anteriores que fiquem órfãs quando uma nova começa
+    // Opção B: nova tentativa bloqueia as anteriores ativas
     await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment!.id, status: "ACTIVE" },
+      where: { paymentId, status: "ACTIVE" },
       data: { status: "BLOCKED" },
     });
 
     await tx.paymentAttempt.create({
       data: {
-        paymentId: payment!.id,
+        paymentId,
         attemptNumber: nextAttemptNumber,
         status: "ACTIVE",
         idempotencyKey: attemptKey,
@@ -124,7 +117,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     });
 
     await tx.payment.update({
-      where: { id: payment!.id },
+      where: { id: paymentId },
       data: {
         status: PROVIDER_STATUS_MAP[result.status] as never,
         providerRef: result.providerRef,
@@ -151,7 +144,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     actorUserId: ctx.userId,
     action: "payment.initiated",
     after: sanitizeForAudit({
-      paymentId: payment.id,
+      paymentId,
       attempt: nextAttemptNumber,
       provider: provider.code,
       amountCents: order.totalCents,
@@ -159,7 +152,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   });
 
   return {
-    paymentId: payment.id,
+    paymentId,
     attemptId: attemptKey,
     redirectUrl: result.redirectUrl,
     providerRef: result.providerRef,
@@ -170,7 +163,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
 export async function confirmPayment(providerRef: string, rawPayload: unknown): Promise<void> {
   const payment = await prisma.payment.findUnique({
     where: { providerRef },
-    include: { order: { include: { hold: true, attendees: true, lines: true } } },
+    include: { order: { include: { lines: true } } },
   });
   if (!payment) {
     console.error("[webhook] payment-not-found", { providerRef });
@@ -179,7 +172,7 @@ export async function confirmPayment(providerRef: string, rawPayload: unknown): 
   if (payment.status === "CONFIRMED") return; // idempotente
 
   await prisma.$transaction(async (tx) => {
-    // Revalida estado dentro da transação
+    // Revalida estado dentro da transação (webhook pode repetir)
     const fresh = await tx.payment.findUnique({
       where: { id: payment.id },
       select: { status: true },
@@ -201,8 +194,8 @@ export async function confirmPayment(providerRef: string, rawPayload: unknown): 
       data: { status: "COMPLETED", finishedAt: new Date() },
     });
     await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment.id, status: { not: "COMPLETED" } },
-      data: { status: "BLOCKED", finishedAt: new Date() },
+      where: { paymentId: payment.id, status: "BLOCKED" },
+      data: { finishedAt: new Date() },
     });
 
     await tx.order.update({
@@ -210,26 +203,37 @@ export async function confirmPayment(providerRef: string, rawPayload: unknown): 
       data: { status: "CONFIRMED", confirmedAt: new Date() },
     });
 
-    // Consumo o hold (reservado → vendido)
-    if (payment.order.holdId) {
+    // Consome o hold: reservado → vendido (transacional)
+    const hold = await tx.inventoryHold.findUnique({
+      where: { id: payment.order.holdId ?? "" },
+      select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
+    });
+    if (hold) {
+      if (hold.status === "CONFIRMED") return; // já consumido
       await tx.inventoryHold.update({
-        where: { id: payment.order.holdId },
+        where: { id: hold.id },
         data: { status: "CONFIRMED", releasedAt: new Date() },
       });
       for (const line of payment.order.lines) {
-        await tx.ticketInventory.update({
+        const inv = await tx.ticketInventory.findUnique({
           where: {
             sessionId_ticketTypeId_batchId: {
-              sessionId: payment.order.sessionId!,
+              sessionId: payment.order.sessionId ?? hold.sessionId,
               ticketTypeId: line.ticketTypeId,
               batchId: line.batchId,
             },
           },
-          data: {
-            reservedQuantity: { decrement: line.quantity },
-            soldQuantity: { increment: line.quantity },
-          },
+          select: { id: true },
         });
+        if (inv) {
+          await tx.ticketInventory.update({
+            where: { id: inv.id },
+            data: {
+              reservedQuantity: { decrement: line.quantity },
+              soldQuantity: { increment: line.quantity },
+            },
+          });
+        }
       }
     }
   });
@@ -246,7 +250,7 @@ export async function confirmPayment(providerRef: string, rawPayload: unknown): 
   });
 }
 
-/** Webhook: validar + rotear estado (nunca confiar no corpo sem assinatura). */
+/** Webhook: validar assinatura + rotear estado (nunca confiar no corpo). */
 export async function handleWebhook(
   providerCode: string,
   rawBody: string,
@@ -257,46 +261,53 @@ export async function handleWebhook(
   const adapter = getAdapter(providerCode);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador não instalado.");
 
-  const payload = adapter.verifyWebhook(rawBody, headers, (provider.adapterConfig ?? {}) as Record<string, unknown>);
+  const payload = adapter.verifyWebhook(
+    rawBody,
+    headers,
+    (provider.adapterConfig ?? {}) as Record<string, unknown>
+  );
   if (!payload) {
     throw new AppError("WEBHOOK_INVALID", 401, "Assinatura de webhook inválida.");
   }
 
   const payment = await prisma.payment.findUnique({
     where: { providerRef: payload.providerRef },
-    select: { id: true, amountCents: true, status: true },
+    select: { id: true, amountCents: true, orderId: true },
   });
   if (!payment) return { processed: false }; // ignora transações desconhecidas
 
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
-    // Divergência → estado indefinido: inventário protegido, revisão manual
+    // Divergência → resultado indefinido: inventário protegido + revisão manual
+    const order = await prisma.order.findUnique({
+      where: { id: payment.orderId },
+      select: { holdId: true },
+    });
+    if (order?.holdId) {
+      await markHoldVerifying(order.holdId);
+    }
     await prisma.payment.update({
       where: { id: payment.id },
       data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
-    const order = await prisma.order.findUnique({
-      where: { orderId_payment: undefined } as never,
-    });
-    void order;
     throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
   }
 
   if (payload.status === "CONFIRMED") {
     await confirmPayment(payload.providerRef, payload.rawPayload);
-  } else if (payload.status === "DECLINED" || payload.status === "CANCELLED" || payload.status === "EXPIRED") {
+  } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
     await prisma.payment.update({
       where: { id: payment.id },
       data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
     });
   } else if (payload.status === "UNKNOWN") {
-    // Sem resultado definitivo: protege inventário e marca verificação
-    const p = await prisma.payment.findUnique({
-      where: { id: payment.id },
-      include: { order: { select: { holdId: true } } },
+    // Sem resultado definitivo: protege inventário e marca revisão
+    const order = await prisma.order.findUnique({
+      where: { id: payment.orderId },
+      select: { holdId: true },
     });
-    if (p?.order.holdId) {
-      await markHoldVerifying(p.order.holdId);
+    if (order?.holdId) {
+      await markHoldVerifying(order.holdId);
     }
     await prisma.payment.update({
       where: { id: payment.id },
@@ -310,10 +321,10 @@ export async function handleWebhook(
 /** Opção C: revisão manual por operador autorizado — exige evidência escrita. */
 export async function manualReview(ctx: AuthContext, input: ManualReviewInput): Promise<void> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (!ctx.permissions.has("payment:review")) throw new ForbiddenError("payment:review");
 
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId },
-    include: { order: { select: { holdId: true } } },
   });
   if (!payment || payment.organizationId !== ctx.organizationId) {
     throw new NotFoundError("Pagamento");
@@ -321,10 +332,9 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
   if (payment.status !== "UNDER_REVIEW" && payment.status !== "AWAITING_AUTHORIZATION") {
     throw new BusinessRuleError("Pagamento não está pendente de análise.");
   }
-  if (!ctx.permissions.has("payment:review")) throw new ForbiddenError("payment:review");
 
   if (input.decision === "CONFIRM") {
-    // Ninguém marca como paga sem evidência (Opção C): notas obrigatórias
+    // Opção C: ninguém marca como paga sem evidência (notas obrigatórias)
     await prisma.payment.update({
       where: { id: payment.id },
       data: { status: "CONFIRMED", confirmedAt: new Date() },
@@ -346,10 +356,6 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       where: { id: payment.id },
       data: { status: "DECLINED" },
     });
-    if (payment.order.holdId) {
-      const { confirmHold: _unused } = { confirmHold };
-      void _unused;
-    }
     await writeAudit({
       organizationId: ctx.organizationId,
       actorUserId: ctx.userId,
