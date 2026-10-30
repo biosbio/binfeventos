@@ -41,7 +41,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 12 — Módulo events: CRUD, sessões, recintos, máquina de estados com guards e testes
 - [x] Parte 13 — Módulos inventory + sales: reservas com FOR UPDATE, idempotência, checkout 100% server-side
 - [x] Parte 14 — Módulos payments + access + boxoffice: adaptadores, Opção B/C, QR rotativo, turnos de caixa
-- [ ] Parte 15 — Módulo financeiro completo: reembolsos, liquidações, livro-razão com dupla aprovação
+- [x] Parte 15 — Módulo finance: reembolsos segregados, liquidações com dupla aprovação, livro-razão imutável
 - [ ] Parte 16 — Domínio 12: Aplicações e experiência (web responsiva)
 
 ## Regra de ouro (segurança)
@@ -108,6 +108,15 @@ npm run test             # testes de caracterização (vitest)
 | POST | `/api/boxoffice/shifts/close` | Fechar turno (regista diferenças) | `shift:close` |
 | POST | `/api/boxoffice/shifts/movement` | Movimento de caixa | `cash:movement` |
 | POST | `/api/boxoffice/sale` | Venda presencial (motor central) | `boxoffice:sell` |
+| POST | `/api/finance/refunds/request` | Solicitar reembolso | `refund:request` |
+| POST | `/api/finance/refunds/decide` | Aprovar/rejeitar (segregação) | `refund:approve` |
+| POST | `/api/finance/settlements/prepare` | Preparar liquidação | `settlement:prepare` |
+| POST | `/api/finance/settlements/decide` | Dupla aprovação | `settlement:approve` |
+| POST | `/api/finance/settlements/paid` | Marcar liquidação paga | `settlement:approve` |
+| POST | `/api/finance/reserves` | Constituir reserva | `reserve:manage` |
+| POST | `/api/finance/reserves/release` | Libertar reserva | `reserve:manage` |
+| POST | `/api/finance/ledger/adjust` | Lançamento compensatório | `ledger:adjust` |
+| GET | `/api/finance/ledger` | Consultar livro-razão | `ledger:read` |
 
 ## Princípios estruturais
 
@@ -120,6 +129,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-12-modulo-events.md](docs/parte-12-modulo-events.md) — módulo events
 - [docs/parte-13-inventario-checkout.md](docs/parte-13-inventario-checkout.md) — inventário transacional + checkout
 - [docs/parte-14-pagamentos-caixa-acesso.md](docs/parte-14-pagamentos-caixa-acesso.md) — pagamentos, caixa, acesso
+- [docs/parte-15-modulo-finance.md](docs/parte-15-modulo-finance.md) — reembolsos, liquidações, livro-razão
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
