@@ -39,9 +39,16 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 10 — Fundação de código: setup, erros, segurança, auditoria, sessões/guards ABAC, permissões, seed
 - [x] Parte 11 — Módulos users + organizations: registo, login, MFA TOTP, orgs, convites, papéis, testes
 - [x] Parte 12 — Módulo events: CRUD, sessões, recintos, máquina de estados com guards e testes
-- [ ] Parte 13 — Domínios 3-4 em código: inventário transacional + checkout
+- [x] Parte 13 — Módulos inventory + sales: reservas com FOR UPDATE, idempotência, checkout 100% server-side
 - [ ] Parte 14 — Domínios 5-7 em código: pagamentos, caixa, controlo de acesso
 - [ ] Parte 15 — Domínio 12: Aplicações e experiência (web responsiva)
+
+## Regra de ouro (segurança)
+
+**Senhas e dados sensíveis ficam no backend.** O cliente envia apenas
+identificadores e quantidades; preços, taxas, totais, prazos de expiração e
+segredos são sempre calculados/gerados no servidor e nunca devolvidos em
+consultas (`select` explícito em todas as APIs).
 
 ## Como executar localmente
 
@@ -78,6 +85,15 @@ npm run test             # testes de caracterização (vitest)
 | POST | `/api/events/{id}/sessions` | Adicionar sessão | `session:manage` |
 | POST | `/api/events/{id}/transition` | Transição de estado (por destino) | `event:publish` / `event:cancel` / `org:manage` |
 | POST | `/api/events/venues` | Criar recinto | `venue:manage` |
+| POST | `/api/marketplace/availability` | Disponibilidade da sessão | público |
+| POST | `/api/marketplace/holds` | Criar reserva temporária | `order:create` |
+| POST | `/api/marketplace/holds/release` | Libertar reserva | autenticado (própria) |
+| POST | `/api/marketplace/orders` | Checkout (valores server-side) | `order:create` |
+| GET | `/api/marketplace/orders/{id}` | Consultar encomenda | comprador / `order:read` |
+| POST | `/api/marketplace/orders/{id}/cancel` | Cancelar encomenda | comprador / `order:cancel` |
+| POST | `/api/catalog/ticket-types` | Criar tipo de bilhete | `ticketType:manage` |
+| POST | `/api/catalog/batches` | Criar lote (+ inventário) | `batch:manage` |
+| POST | `/api/catalog/run-expiration` | Job: expirar reservas | `inventory:read` (cron) |
 
 ## Princípios estruturais
 
@@ -88,6 +104,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-10-fundacao-codigo.md](docs/parte-10-fundacao-codigo.md) — fundação de código e estrutura
 - [docs/parte-11-modulos-users-organizations.md](docs/parte-11-modulos-users-organizations.md) — módulos de negócio
 - [docs/parte-12-modulo-events.md](docs/parte-12-modulo-events.md) — módulo events
+- [docs/parte-13-inventario-checkout.md](docs/parte-13-inventario-checkout.md) — inventário transacional + checkout
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
