@@ -50,6 +50,9 @@ model Organization {
   transferRequests TicketTransferRequest[]
   accessGates AccessGate[]
   accessEvents AccessEvent[]
+  fraudRules  FraudRule[]
+  fraudAlerts FraudAlert[]
+  incidents   SecurityIncident[]
 
   @@map("organizations")
 }
@@ -455,6 +458,7 @@ model Order {
   refunds      Refund[]
   shiftId      String?     @db.Uuid
   tickets      Ticket[]
+  fraudAlerts  FraudAlert[]
 
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
@@ -855,33 +859,28 @@ model CashDeposit {
 // Parte 7 — Domínio 7: Controlo de Acesso
 // ============================================================
 
-// Estado do bilhete emitido (doc. mestra, secção 14)
 enum TicketStatus {
-  ISSUED      // emitido, válido para entrada
-  USED        // utilizado (entrada validada)
-  TRANSFERRED // titularidade transferida (QR anterior invalidado)
-  CANCELLED   // cancelado (evento cancelado, reembolso, fraude)
-  EXPIRED     // expirado (sessão realizada sem utilização)
-  REVOKED     // revogado administrativamente
+  ISSUED
+  USED
+  TRANSFERRED
+  CANCELLED
+  EXPIRED
+  REVOKED
 }
 
-// Bilhete digital: identificador único, QR individual, titular identificado.
-// Emissão APENAS após confirmação válida do pagamento (idempotente).
 model Ticket {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @db.Uuid
   orderId        String       @db.Uuid
   sessionId      String       @db.Uuid
   ticketTypeId   String       @db.Uuid
-  orderAttendeeId String?     @db.Uuid // titular identificado
-  seatId         String?     @db.Uuid // lugar numerado, quando aplicável
-  ticketNumber   String       @unique // identificador único legível
+  orderAttendeeId String?     @db.Uuid
+  seatId         String?     @db.Uuid
+  ticketNumber   String       @unique
   status         TicketStatus @default(ISSUED)
-  // Segredo do QR: hash do token imprevisível; o token plano nunca é guardado
   qrSecretHash   String       @unique
   qrIssuedAt     DateTime     @default(now())
-  qrRotatedAt    DateTime?    // última rotação (transferência)
-  // Reentrada: quando permitido pelo evento
+  qrRotatedAt    DateTime?
   reentryAllowed Boolean      @default(false)
   entryCount     Int          @default(0)
   lastExitAt     DateTime?
@@ -900,13 +899,12 @@ model Ticket {
   @@map("tickets")
 }
 
-// Transferência controlada de bilhetes (doc. mestra, secção 13)
 enum TransferStatus {
-  REQUESTED      // solicitação pelo titular
+  REQUESTED
   ELIGIBILITY_CHECK
-  AWAITING_CONFIRMATION // confirmação quando aplicável
-  COMPLETED      // titularidade atualizada + novo QR emitido
-  REJECTED       // sem elegibilidade ou fora dos prazos
+  AWAITING_CONFIRMATION
+  COMPLETED
+  REJECTED
   CANCELLED
 }
 
@@ -914,8 +912,7 @@ model TicketTransferRequest {
   id             String         @id @default(uuid()) @db.Uuid
   organizationId String         @db.Uuid
   ticketId       String         @db.Uuid
-  requesterUserId String?       @db.Uuid // titular atual (se autenticado)
-  // Dados do NOVO titular (identificação obrigatória)
+  requesterUserId String?       @db.Uuid
   newHolderFullName String
   newHolderEmail    String?
   newHolderPhone    String?
@@ -935,19 +932,18 @@ model TicketTransferRequest {
   @@map("ticket_transfer_requests")
 }
 
-// Porta/ponto de acesso físico (validadores)
 enum GateType {
-  ENTRY       // entrada
-  EXIT        // saída
-  REENTRY     // reentrada
+  ENTRY
+  EXIT
+  REENTRY
 }
 
 model AccessGate {
   id             String    @id @default(uuid()) @db.Uuid
   organizationId String    @db.Uuid
   venueId        String    @db.Uuid
-  sessionId      String?   @db.Uuid // gate dedicado a uma sessão (opcional)
-  code            String   // ex: "PORTA-A"
+  sessionId      String?   @db.Uuid
+  code            String
   name            String
   gateType        GateType  @default(ENTRY)
   isActive        Boolean   @default(true)
@@ -961,7 +957,6 @@ model AccessGate {
   @@map("access_gates")
 }
 
-// Registo de movimento: entrada, saída, reentrada e tentativas recusadas
 enum AccessEventType {
   ENTRY_GRANTED
   ENTRY_DENIED
@@ -971,26 +966,26 @@ enum AccessEventType {
 }
 
 enum DenialReason {
-  INVALID_QR        // QR inválido, expirado ou revogado
-  ALREADY_USED      // bilhete já utilizado
-  WRONG_SESSION     // bilhete de outra sessão
+  INVALID_QR
+  ALREADY_USED
+  WRONG_SESSION
   TICKET_CANCELLED
   TICKET_REVOKED
-  IDENTITY_MISMATCH // titular não confere com identificação
-  NOT_EVENT_DAY     // fora do horário de abertura
+  IDENTITY_MISMATCH
+  NOT_EVENT_DAY
   GATE_CLOSED
 }
 
 model AccessEvent {
   id             String          @id @default(uuid()) @db.Uuid
   organizationId String          @db.Uuid
-  ticketId       String?         @db.Uuid // null = tentativa com QR irreconhecível
+  ticketId       String?         @db.Uuid
   gateId         String          @db.Uuid
   eventType      AccessEventType
   denialReason   DenialReason?
-  qrPayloadHash  String?         // hash do QR apresentado (evidência, nunca o segredo)
-  validatorUserId String?        @db.Uuid // operador do validador
-  identityVerified Boolean       @default(false) // conferência de identidade
+  qrPayloadHash  String?
+  validatorUserId String?        @db.Uuid
+  identityVerified Boolean       @default(false)
   occurredAt     DateTime        @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
@@ -1000,4 +995,127 @@ model AccessEvent {
   @@index([organizationId, occurredAt])
   @@index([ticketId])
   @@map("access_events")
+}
+
+// ============================================================
+// Parte 8 — Domínio 8: Segurança e Antifraude
+// ============================================================
+
+// Estratégia aprovada: sistema antifraude baseado em REGRAS EXPLICÁVEIS
+// e controlos progressivos (sem IA/ML no MVP).
+enum RiskLevel {
+  LOW      // permitir operação
+  MEDIUM   // exigir verificação adicional
+  HIGH     // bloquear ou encaminhar para revisão
+}
+
+enum RuleAction {
+  ALLOW
+  REQUIRE_VERIFICATION
+  BLOCK
+  MANUAL_REVIEW
+}
+
+// Regra antifraude explicável: condição + ação, auditável.
+// Alterações de regras exigem dupla aprovação (SEC / secção 4).
+enum RuleStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model FraudRule {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid // null = regra global? -> manter obrigatória
+  name           String
+  description    String?
+  // Condição explicável em JSON: ex: {"field":"order.totalCents","op":">","value":500000}
+  condition      Json
+  action         RuleAction
+  riskLevel      RiskLevel
+  status         RuleStatus @default(DRAFT)
+  createdByUserId  String  @db.Uuid
+  approvedByUserId String? @db.Uuid // dupla aprovação
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  alerts      FraudAlert[]
+
+  @@unique([organizationId, name])
+  @@map("fraud_rules")
+}
+
+enum AlertStatus {
+  OPEN
+  IN_INVESTIGATION
+  RESOLVED_FALSE_POSITIVE
+  RESOLVED_CONFIRMED_FRAUD
+  ACTION_TAKEN
+}
+
+// Alerta gerado por regra avaliada durante o checkout ou operação financeira
+model FraudAlert {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  ruleId         String      @db.Uuid
+  orderId        String?     @db.Uuid
+  riskLevel      RiskLevel
+  status         AlertStatus @default(OPEN)
+  evidence       Json        // dados que dispararam a regra (rastreável)
+  investigatedByUserId String? @db.Uuid
+  resolutionNotes String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  rule         FraudRule    @relation(fields: [ruleId], references: [id])
+  order        Order?       @relation(fields: [orderId], references: [id])
+
+  @@index([organizationId, status])
+  @@map("fraud_alerts")
+}
+
+// Gestão e resposta a incidentes (SEC-19)
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  DETECTED
+  TRIAGED
+  CONTAINED
+  INVESTIGATING
+  RECOVERING
+  RESOLVED
+  CLOSED
+}
+
+model SecurityIncident {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  title          String
+  description    String?
+  severity       IncidentSeverity
+  status         IncidentStatus   @default(DETECTED)
+  detectedAt     DateTime         @default(now())
+  reportedByUserId String?        @db.Uuid
+  assignedToUserId String?        @db.Uuid
+  // Preservação de evidências (SEC-19): registos imutáveis anexados
+  evidence       Json?
+  containmentNotes String?
+  resolutionNotes String?
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
+  @@map("security_incidents")
 }
