@@ -10,7 +10,7 @@ jobs:
   quality:
     runs-on: ubuntu-latest
 
-services:
+services:                      # ← indentado para dentro do job
       postgres:
         image: postgres:16
         env:
@@ -21,13 +21,13 @@ services:
           - 5432:5432
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
 
-env:
+env:                            # ← indentado para dentro do job
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/binf_test?schema=public
       SANDBOX_WEBHOOK_SECRET: ci-secret-4f7a
       ADMIN_EMAIL: admin@binf.local
       ADMIN_PASSWORD: CiAdmin!2026x
 
-steps:
+steps:                          # ← indentado para dentro do job
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -43,3 +43,4 @@ steps:
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm run test:e2e
+
