@@ -40,8 +40,9 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 11 — Módulos users + organizations: registo, login, MFA TOTP, orgs, convites, papéis, testes
 - [x] Parte 12 — Módulo events: CRUD, sessões, recintos, máquina de estados com guards e testes
 - [x] Parte 13 — Módulos inventory + sales: reservas com FOR UPDATE, idempotência, checkout 100% server-side
-- [ ] Parte 14 — Domínios 5-7 em código: pagamentos, caixa, controlo de acesso
-- [ ] Parte 15 — Domínio 12: Aplicações e experiência (web responsiva)
+- [x] Parte 14 — Módulos payments + access + boxoffice: adaptadores, Opção B/C, QR rotativo, turnos de caixa
+- [ ] Parte 15 — Módulo financeiro completo: reembolsos, liquidações, livro-razão com dupla aprovação
+- [ ] Parte 16 — Domínio 12: Aplicações e experiência (web responsiva)
 
 ## Regra de ouro (segurança)
 
@@ -94,6 +95,19 @@ npm run test             # testes de caracterização (vitest)
 | POST | `/api/catalog/ticket-types` | Criar tipo de bilhete | `ticketType:manage` |
 | POST | `/api/catalog/batches` | Criar lote (+ inventário) | `batch:manage` |
 | POST | `/api/catalog/run-expiration` | Job: expirar reservas | `inventory:read` (cron) |
+| POST | `/api/payments/initiate` | Iniciar pagamento | comprador / `boxoffice:sell` |
+| POST | `/api/payments/webhook/{code}` | Webhook do prestador | assinatura validada |
+| POST | `/api/payments/review` | Opção C: revisão manual | `payment:review` |
+| GET | `/api/payments/pending` | Pagamentos pendentes | `payment:review` |
+| POST | `/api/access/validate` | Validar QR na portaria | `access:validate` |
+| POST | `/api/access/transfer` | Solicitar transferência | titular |
+| POST | `/api/access/transfer/decide` | Aprovar/rejeitar transferência | `transfer:approve` |
+| GET | `/api/access/tickets/{id}/qr` | Reobter QR (rotação) | titular |
+| POST | `/api/access/gates` | Criar porta/validador | `gate:manage` |
+| POST | `/api/boxoffice/shifts/open` | Abrir turno | `shift:open` |
+| POST | `/api/boxoffice/shifts/close` | Fechar turno (regista diferenças) | `shift:close` |
+| POST | `/api/boxoffice/shifts/movement` | Movimento de caixa | `cash:movement` |
+| POST | `/api/boxoffice/sale` | Venda presencial (motor central) | `boxoffice:sell` |
 
 ## Princípios estruturais
 
@@ -105,6 +119,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-11-modulos-users-organizations.md](docs/parte-11-modulos-users-organizations.md) — módulos de negócio
 - [docs/parte-12-modulo-events.md](docs/parte-12-modulo-events.md) — módulo events
 - [docs/parte-13-inventario-checkout.md](docs/parte-13-inventario-checkout.md) — inventário transacional + checkout
+- [docs/parte-14-pagamentos-caixa-acesso.md](docs/parte-14-pagamentos-caixa-acesso.md) — pagamentos, caixa, acesso
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
