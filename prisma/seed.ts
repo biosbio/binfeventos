@@ -3,14 +3,14 @@ import { hashPassword } from "../src/shared/lib/security";
 import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
 
 // ============================================================
-// Seed: permissões + papéis de sistema + prestador CASH + admin.
+// Seed: permissões + papéis + prestadores + admin local.
 // Executar: npm run db:seed
 // ============================================================
 
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
-  // 1. Permissões (upsert — catálogo é fonte única de verdade)
+  // 1. Permissões (catálogo é fonte única de verdade)
   for (const perm of PERMISSIONS) {
     await prisma.permission.upsert({
       where: { code: perm.code },
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     });
   }
 
-  // 2. Papéis de sistema (isSystem=true, organizationId=null)
+  // 2. Papéis de sistema
   for (const [roleName, permCodes] of Object.entries(SYSTEM_ROLES)) {
     const role = await prisma.role.upsert({
       where: { name_organizationId: { name: roleName, organizationId: null } },
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // 3. Prestador CASH (bilheteira física; sem chaves externas)
+  // 3. Prestadores
   await prisma.paymentProvider.upsert({
     where: { code: "cash" },
     update: {},
@@ -55,6 +55,20 @@ async function main(): Promise<void> {
       name: "Dinheiro (bilheteira física)",
       country: "GLOBAL",
       isActive: true,
+    },
+  });
+
+  // Sandbox: webhookSecret vem de env em deploy real (nunca hardcoded)
+  const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET ?? "dev-only-secret";
+  await prisma.paymentProvider.upsert({
+    where: { code: "sandbox" },
+    update: {},
+    create: {
+      code: "sandbox",
+      name: "Sandbox (desenvolvimento)",
+      country: "GLOBAL",
+      isActive: true,
+      adapterConfig: { webhookSecret: sandboxSecret },
     },
   });
 
@@ -75,7 +89,7 @@ async function main(): Promise<void> {
   });
 
   console.log(`Seed concluído. Admin local: ${admin.email}`);
-  console.log("AVISO: em produção, definir ADMIN_EMAIL/ADMIN_PASSWORD e alterar a password inicial.");
+  console.log("AVISO: em produção, definir ADMIN_EMAIL/ADMIN_PASSWORD/SANDBOX_WEBHOOK_SECRET.");
 }
 
 main()
