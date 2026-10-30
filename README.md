@@ -37,8 +37,11 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 8 — Domínio 8: Segurança e Antifraude (FraudRule, FraudAlert, SecurityIncident)
 - [x] Parte 9 — Domínios 9-11: Administração (SaasSubscription), Notificações, Relatórios (DataExport)
 - [x] Parte 10 — Fundação de código: setup, erros, segurança, auditoria, sessões/guards ABAC, permissões, seed
-- [ ] Parte 11 — Módulos de negócio: users/organizations (API + MFA)
-- [ ] Parte 12 — Domínio 12: Aplicações e experiência (web responsiva)
+- [x] Parte 11 — Módulos users + organizations: registo, login, MFA TOTP, orgs, convites, papéis, testes
+- [ ] Parte 12 — Domínio 2 em código: eventos/sessões (máquina de estados)
+- [ ] Parte 13 — Domínios 3-4 em código: inventário transacional + checkout
+- [ ] Parte 14 — Domínios 5-7 em código: pagamentos, caixa, controlo de acesso
+- [ ] Parte 15 — Domínio 12: Aplicações e experiência (web responsiva)
 
 ## Como executar localmente
 
@@ -49,7 +52,25 @@ npm run prisma:generate
 npm run prisma:migrate
 npm run db:seed
 npm run dev
+npm run test             # testes de caracterização (vitest)
 ```
+
+## Endpoints disponíveis
+
+| Método | Rota | Descrição | Requisito |
+|---|---|---|---|
+| POST | `/api/users/register` | Registar conta | público |
+| POST | `/api/users/login` | Login (com MFA se ativado) | público |
+| POST | `/api/users/logout` | Terminar sessão | autenticado |
+| POST | `/api/users/mfa/setup` | Iniciar MFA (gera QR otpauth) | autenticado |
+| POST | `/api/users/mfa/confirm` | Confirmar MFA | autenticado |
+| POST | `/api/users/mfa/disable` | Desativar MFA (exige código) | autenticado |
+| POST | `/api/users/password` | Alterar password (revoga sessões) | autenticado |
+| POST | `/api/organizations/create` | Criar organização | autenticado |
+| GET | `/api/organizations/members` | Listar membros | `org:manage` |
+| POST | `/api/organizations/members/invite` | Convidar membro | `org:invite` |
+| POST | `/api/organizations/members/accept` | Aceitar convite | autenticado |
+| POST | `/api/organizations/members/role` | Mudar papel | `org:role:assign` |
 
 ## Princípios estruturais
 
@@ -58,6 +79,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 ## Documentação
 
 - [docs/parte-10-fundacao-codigo.md](docs/parte-10-fundacao-codigo.md) — fundação de código e estrutura
+- [docs/parte-11-modulos-users-organizations.md](docs/parte-11-modulos-users-organizations.md) — módulos de negócio
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
