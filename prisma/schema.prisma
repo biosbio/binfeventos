@@ -38,6 +38,7 @@ model Organization {
   events      Event[]
   venues      Venue[]
   ticketTypes TicketType[]
+  orders      Order[]
 
   @@map("organizations")
 }
@@ -54,6 +55,7 @@ model User {
 
   memberships OrgMembership[]
   sessions    Session[]
+  orders      Order[]
 
   @@map("users")
 }
@@ -204,6 +206,7 @@ model EventSession {
   venue Venue? @relation(fields: [venueId], references: [id])
   inventory TicketInventory[]
   holds      InventoryHold[]
+  orders     Order[]
 
   @@index([eventId, startsAt])
   @@map("event_sessions")
@@ -213,8 +216,6 @@ model EventSession {
 // Parte 3 — Domínio 3: Bilhetes e Inventário
 // ============================================================
 
-// Categoria do bilhete: Normal, VIP, Premium, Estudante, Criança,
-// Gratuito, Convite, Acesso especial (documentação mestra, secção 10)
 enum TicketCategory {
   NORMAL
   VIP
@@ -232,7 +233,6 @@ enum TicketTypeStatus {
   CLOSED
 }
 
-// Tipo de bilhete: preço base e regras próprias por evento
 model TicketType {
   id             String         @id @default(uuid()) @db.Uuid
   eventId        String         @db.Uuid
@@ -242,9 +242,8 @@ model TicketType {
   description    String?
   basePriceCents Int            @default(0)
   currency       String         @default("AOA")
-  // Regras próprias: documentos exigidos, idade mínima, condições de acesso
   rules          Json?
-  requiresIdentity Boolean      @default(true) // identificação obrigatória do titular
+  requiresIdentity Boolean      @default(true)
   status         TicketTypeStatus @default(ACTIVE)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -253,31 +252,31 @@ model TicketType {
   organization   Organization   @relation(fields: [organizationId], references: [id])
   batches        TicketBatch[]
   inventory      TicketInventory[]
+  holds          InventoryHold[]
   seats          Seat[]
+  orderLines     OrderLine[]
 
   @@index([eventId])
   @@map("ticket_types")
 }
 
 enum BatchStatus {
-  SCHEDULED // antes do início da comercialização
-  OPEN      // à venda
-  PAUSED    // suspenso pelo organizador
-  CLOSED    // encerrado
-  SOLD_OUT  // esgotado (automático)
+  SCHEDULED
+  OPEN
+  PAUSED
+  CLOSED
+  SOLD_OUT
 }
 
-// Lote: período de comercialização, quantidade e limites por comprador
 model TicketBatch {
   id           String      @id @default(uuid()) @db.Uuid
   ticketTypeId String      @db.Uuid
   name         String
   quantity     Int
-  // Preço do lote em cêntimos; null = usar basePriceCents do tipo
   priceCents   Int?
-  startsAt     DateTime    // início da comercialização
-  endsAt       DateTime    // fim da comercialização
-  maxPerBuyer  Int         @default(10) // limite por comprador
+  startsAt     DateTime
+  endsAt       DateTime
+  maxPerBuyer  Int         @default(10)
   status       BatchStatus @default(SCHEDULED)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -289,29 +288,25 @@ model TicketBatch {
   @@map("ticket_batches")
 }
 
-// Estado das reservas temporárias (documentação mestra, secção 11)
 enum HoldStatus {
-  AVAILABLE       // disponível
-  RESERVED        // reservado temporariamente
-  PENDING_PAYMENT // pagamento pendente
-  VERIFYING       // em verificação de pagamento
-  CONFIRMED       // venda confirmada
-  EXPIRED         // expirado
-  CANCELLED       // cancelado
+  AVAILABLE
+  RESERVED
+  PENDING_PAYMENT
+  VERIFYING
+  CONFIRMED
+  EXPIRED
+  CANCELLED
 }
 
-// Núcleo comum de inventário: disponibilidade por sessão + tipo + lote.
-// Atualizado transacionalmente; protege contra venda duplicada.
 model TicketInventory {
   id           String @id @default(uuid()) @db.Uuid
   sessionId    String @db.Uuid
   ticketTypeId String @db.Uuid
   batchId      String @db.Uuid
 
-  totalQuantity     Int @default(0) // quantidade atribuída ao lote
-  reservedQuantity  Int @default(0) // em reserva temporária ativa
-  soldQuantity      Int @default(0) // vendas confirmadas
-  // disponibilidade = total - reserved - sold (calculada em transação)
+  totalQuantity     Int @default(0)
+  reservedQuantity  Int @default(0)
+  soldQuantity      Int @default(0)
 
   session    EventSession @relation(fields: [sessionId], references: [id])
   ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
@@ -321,8 +316,6 @@ model TicketInventory {
   @@map("ticket_inventory")
 }
 
-// Reserva temporária de inventário durante a compra.
-// Prazo controlado pelo servidor (SEC: nunca confiar no cliente).
 model InventoryHold {
   id           String     @id @default(uuid()) @db.Uuid
   organizationId String   @db.Uuid
@@ -331,7 +324,6 @@ model InventoryHold {
   batchId      String     @db.Uuid
   status       HoldStatus @default(RESERVED)
   quantity     Int
-  // Reserva exclusiva e idempotência: impede duplicação de reservas
   idempotencyKey String?  @unique
   expiresAt    DateTime
   releasedAt   DateTime?
@@ -342,11 +334,10 @@ model InventoryHold {
   ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
 
   @@index([sessionId, status])
-  @@index([expiresAt]) // varrimento de expiração
+  @@index([expiresAt])
   @@map("inventory_holds")
 }
 
-// Mapa de lugares: por sessão/recinto (lugares numerados no MVP)
 model SeatMap {
   id        String   @id @default(uuid()) @db.Uuid
   sessionId String   @db.Uuid
@@ -364,22 +355,21 @@ model SeatMap {
 
 enum SeatStatus {
   AVAILABLE
-  RESERVED // reserva temporária ativa
-  SOLD     // venda confirmada
-  BLOCKED  // bloqueado pelo organizador (visão obstruída, etc.)
+  RESERVED
+  SOLD
+  BLOCKED
 }
 
-// Lugar individual numerado: setor, fila e lugar
 model Seat {
   id           String     @id @default(uuid()) @db.Uuid
   seatMapId    String     @db.Uuid
-  ticketTypeId String?    @db.Uuid // tipo atribuído ao lugar
+  ticketTypeId String?    @db.Uuid
   section      String
   row          String
-  label        String     // número/código do lugar
+  label        String
   status       SeatStatus @default(AVAILABLE)
-  holdId       String?    @db.Uuid // reserva temporária que protege o lugar
-  expiresAt    DateTime?  // expiração da reserva do lugar
+  holdId       String?    @db.Uuid
+  expiresAt    DateTime?
 
   seatMap    SeatMap     @relation(fields: [seatMapId], references: [id])
   ticketType TicketType? @relation(fields: [ticketTypeId], references: [id])
@@ -387,4 +377,111 @@ model Seat {
   @@unique([seatMapId, section, row, label])
   @@index([seatMapId, status])
   @@map("seats")
+}
+
+// ============================================================
+// Parte 4 — Domínio 4: Venda e Checkout
+// ============================================================
+
+// Estados da encomenda (documentação mestra, Parte 3, secção 1)
+enum OrderStatus {
+  DRAFT                  // Rascunho
+  RESERVED                // Reservada (inventário protegido)
+  PENDING_PAYMENT         // Pagamento pendente
+  UNDER_REVIEW            // Em análise (ocorrência financeira)
+  CONFIRMED               // Venda validada
+  PARTIALLY_REFUNDED      // Parcialmente reembolsada
+  REFUNDED                // Reembolsada
+  CANCELLED               // Cancelada
+  EXPIRED                 // Expirada
+  DISPUTED                // Em disputa
+}
+
+// Origem da venda — cada venda regista a sua origem (doc. mestra, secção 4)
+enum SalesChannel {
+  MARKETPLACE          // venda online ao público
+  ORGANIZER_PRIVATE    // ambiente privado do organizador
+  BOX_OFFICE          // bilheteira física
+  OTHER               // origens futuras autorizadas
+}
+
+// Encomenda: núcleo de conversão da intenção de compra
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  orderNumber    String      @unique // referência humana legível
+  buyerUserId    String?     @db.Uuid // comprador autenticado (opcional no marketplace)
+  // Dados do comprador (pode não ter conta)
+  buyerName      String
+  buyerEmail     String
+  buyerPhone     String?
+  status         OrderStatus @default(DRAFT)
+  channel        SalesChannel @default(MARKETPLACE)
+  // Valores calculados SEMPRE no servidor (nunca confiáveis do cliente)
+  subtotalCents  Int         @default(0)
+  discountCents  Int         @default(0)
+  serviceFeeCents Int        @default(0)
+  taxCents       Int         @default(0)
+  commissionCents Int        @default(0) // receita da plataforma
+  totalCents     Int         @default(0) // total a pagar
+  currency       String      @default("AOA")
+  // Idempotência do checkout: uma intenção não gera encomendas duplicadas
+  checkoutIdempotencyKey String? @unique
+  holdId         String?    @db.Uuid // reserva de inventário associada
+  sessionId      String?    @db.Uuid // sessão principal (encomendas mono-sessão no MVP)
+  expiresAt      DateTime?  // prazo da reserva
+  confirmedAt    DateTime?
+  cancelledAt    DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  buyer        User?        @relation(fields: [buyerUserId], references: [id])
+  session      EventSession? @relation(fields: [sessionId], references: [id])
+  lines        OrderLine[]
+  attendees    OrderAttendee[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("orders")
+}
+
+// Linha da encomenda: tipo de bilhete + quantidade + preço unitário aplicado
+model OrderLine {
+  id           String   @id @default(uuid()) @db.Uuid
+  orderId      String   @db.Uuid
+  ticketTypeId String   @db.Uuid
+  batchId      String   @db.Uuid
+  quantity     Int
+  unitPriceCents Int     // preço unitário aplicado (do lote ou base)
+  lineSubtotalCents Int
+  createdAt    DateTime @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  @@index([orderId])
+  @@map("order_lines")
+}
+
+// Titular identificado obrigatoriamente (doc. mestra, secção 12):
+// comprador ≠ titular; cada bilhete associado a um participante identificado.
+// Não é obrigatório criar conta para cada titular.
+model OrderAttendee {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderId     String   @db.Uuid
+  ticketTypeId String   @db.Uuid
+  fullName    String   // obrigatório
+  email       String?
+  phone       String?
+  documentType String? // quando exigido (BI, passaporte...)
+  documentNumber String? // quando exigido
+  extraData   Json?    // apenas quando justificado
+  createdAt   DateTime @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  @@index([orderId])
+  @@map("order_attendees")
 }
