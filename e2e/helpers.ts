@@ -38,9 +38,11 @@ export async function registerAndLogin(
 
 export interface BootstrapResult {
   organizerCookie: string;
+  organizationId: string;
   sessionId: string;
   eventId: string;
   eventSlug: string;
+  venueId: string;
 }
 
 /** Bootstrap do organizador: org → recinto → evento → sessão → tipo → lote OPEN. */
@@ -67,15 +69,6 @@ export async function organizerBootstrap(
   expect(createOrg.ok()).toBeTruthy();
   const orgData = await createOrg.json();
   const organizationId = orgData.organization.id as string;
-
-  // Ativa a org na sessão: aceita a associação (criador já é aceite,
-  // mas reafirmar o contexto reautentica a sessão com a org ativa)
-  const accept = await org.post("/api/organizations/members/accept", {
-    headers,
-    data: { organizationId },
-  });
-  // criador já tem acceptedAt: idempotente
-  expect([200, 404, 409]).toContain(accept.status());
 
   // Re-login para a sessão ganhar o contexto organizacional
   const relogin = await registerAndLogin(request, creds.organizerEmail, creds.password);
@@ -161,7 +154,14 @@ export async function organizerBootstrap(
   });
   expect(openBatch.ok()).toBeTruthy();
 
-  return { organizerCookie: cookie, sessionId, eventId, eventSlug: slug };
+  return {
+    organizerCookie: cookie,
+    organizationId,
+    sessionId,
+    eventId,
+    eventSlug: slug,
+    venueId,
+  };
 }
 
 /** Registo + login do comprador; devolve cookie de sessão. */
