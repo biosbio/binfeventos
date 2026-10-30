@@ -46,6 +46,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 17 — Ecrãs autenticados: minha conta, bilhete com QR SVG, checkout 3 passos, portaria, painel
 - [x] Parte 18 — Bugfix CASH (emissão de bilhetes na bilheteira), adaptador sandbox com HMAC, testes
 - [x] Parte 19 — Bugfixes MFA/lotes, gestão de estado de lotes, suíte E2E Playwright (fluxo completo + segurança)
+- [x] Parte 20 — Adaptador Multicaixa Express (AO), painel financeiro web, E2E portaria, CI documentado
 
 ## Regra de ouro (segurança)
 
@@ -55,7 +56,8 @@ segredos são sempre calculados/gerados no servidor e nunca devolvidos em
 consultas (`select` explícito em todas as APIs). A web não persiste
 passwords, tokens de sessão ou QR no navegador — a sessão vive em cookie
 HttpOnly gerado pelo backend, e o QR do bilhete chega apenas como imagem SVG
-gerada no servidor.
+gerada no servidor. Chaves de prestadores (EMIS/Multicaixa) vivem em
+`adapterConfig` via gestor de segredos — nunca no código.
 
 ## Como executar localmente
 
@@ -86,6 +88,16 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/checkout` | Compra em 3 passos (reserva → titulares → pagamento) | Client |
 | `/portaria` | Validação de QR online com registo de recusas | Client |
 | `/painel` | KPIs do organizador (vendas, pagamentos, alertas) | Server |
+| `/financas` | Liquidações + livro-razão (FINANCE_MANAGER) | Server |
+| `/financas/acoes` | Preparar/aprovar/pagar liquidações (dupla aprovação) | Client |
+
+## Prestadores de pagamento
+
+| Código | Tipo | Notas |
+|---|---|---|
+| `sandbox` | Mock | Desenvolvimento; webhook HMAC assinado |
+| `cash` | Físico | Bilheteira física (turnos de caixa) |
+| `multicaixa-express` | Angola (EMIS) | QR/deeplink; UNKNOWN protege inventário; reembolso operacional via portal EMIS |
 
 ## Endpoints disponíveis
 
@@ -127,6 +139,7 @@ npm run test:e2e          # arranca o dev server automaticamente
 | POST | `/api/access/validate` | Validar QR na portaria | `access:validate` |
 | POST | `/api/access/transfer` | Solicitar transferência | titular |
 | POST | `/api/access/transfer/decide` | Aprovar/rejeitar transferência | `transfer:approve` |
+| GET | `/api/access/tickets/{id}/qr` | QR token (rotação) | titular |
 | GET | `/api/access/tickets/{id}/qr-image` | QR SVG (segredo rotado) | titular |
 | POST | `/api/access/gates` | Criar porta/validador | `gate:manage` |
 | POST | `/api/boxoffice/shifts/open` | Abrir turno | `shift:open` |
@@ -159,6 +172,7 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/parte-17-ecras-autenticados.md](docs/parte-17-ecras-autenticados.md) — ecrãs autenticados
 - [docs/parte-18-adaptador-sandbox-ci.md](docs/parte-18-adaptador-sandbox-ci.md) — bugfix CASH, sandbox, CI
 - [docs/parte-19-e2e-bugfixes.md](docs/parte-19-e2e-bugfixes.md) — bugfixes MFA/lotes + E2E Playwright
+- [docs/parte-20-multicaixa-financas-ci.md](docs/parte-20-multicaixa-financas-ci.md) — Multicaixa Express, painel financeiro, CI/E2E
 - [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
 - [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
