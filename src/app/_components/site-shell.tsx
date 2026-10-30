@@ -10,11 +10,12 @@ export function SiteHeader() {
       <nav className="nav" aria-label="Navegação principal">
         <Link href="/#eventos">Eventos</Link>
         <Link href="/#como-funciona">Como funciona</Link>
-        <Link href="/login">Ajuda</Link>
+        <Link href="/painel">Painel</Link>
+        <Link href="/portaria">Portaria</Link>
       </nav>
       <div className="nav-actions">
-        <Link className="button button-secondary" href="/login">Entrar</Link>
-        <Link className="button button-primary" href="/register">Criar conta</Link>
+        <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
+        <Link className="button button-primary" href="/login">Entrar</Link>
       </div>
     </header>
   );
