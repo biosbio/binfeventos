@@ -23,6 +23,8 @@ import type {
 //    original, sem duplicações, com motivo e responsáveis.
 // 3. Tudo registado no livro-razão (REFUND) — imutável.
 // 4. Bilhetes da encomenda são cancelados em reembolso total.
+// 5. Parte 21b (Domínio 10): reembolso concluído notifica o
+//    comprador (REFUND_PROCESSED) de forma best-effort.
 // ============================================================
 
 /** Solicitar reembolso (parcial ou total). */
@@ -83,6 +85,37 @@ export async function requestRefund(ctx: AuthContext, input: RequestRefundInput)
   });
 
   return { refundId: refund.id, isTotal };
+}
+
+/**
+ * Parte 21b (Domínio 10): notifica o comprador de reembolso
+ * concluído. Best-effort — falha de notificação não desfaça o
+ * reembolso (risco nº 12).
+ */
+async function notifyRefundProcessed(orderId: string, refundId: string): Promise<void> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { buyerUserId: true },
+  });
+  if (!order?.buyerUserId) return;
+
+  const { queueNotification } = await import("@/modules/notifications/service");
+  await Promise.allSettled([
+    queueNotification({
+      userId: order.buyerUserId,
+      type: "REFUND_PROCESSED",
+      channel: "IN_APP",
+      data: { orderNumber: orderId, refundId },
+      idempotencyKey: `refund-processed:${refundId}`,
+    }),
+    queueNotification({
+      userId: order.buyerUserId,
+      type: "REFUND_PROCESSED",
+      channel: "EMAIL",
+      data: { orderNumber: orderId, refundId },
+      idempotencyKey: `refund-processed:${refundId}`,
+    }),
+  ]);
 }
 
 /** Aprovar/rejeitar reembolso (segregação: aprovador ≠ solicitante). */
@@ -166,6 +199,9 @@ export async function decideRefund(ctx: AuthContext, input: ApproveRefundInput) 
       select: { id: true },
     });
   });
+
+  // Parte 21b: notificar comprador (best-effort)
+  await notifyRefundProcessed(refund.orderId, result.id);
 
   await writeAudit({
     organizationId: ctx.organizationId,
