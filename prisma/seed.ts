@@ -7,7 +7,7 @@ import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
 // Executar: npm run db:seed
 //
 // IMPORTANTE: o email/password abaixo são para AMBIENTE LOCAL.
-// Em produção, definir via variáveis de ambiente ADMIN_EMAIL/ADMIN_PASSWORD.
+// Em produção, definir via variáveis ADMIN_EMAIL/ADMIN_PASSWORD.
 // ============================================================
 
 const prisma = new PrismaClient();
@@ -17,17 +17,12 @@ async function main(): Promise<void> {
   for (const perm of PERMISSIONS) {
     await prisma.permission.upsert({
       where: { code: perm.code },
-      update: { description: perm.description },
+      update: { domain: perm.domain, description: perm.description },
       create: {
         code: perm.code,
         domain: perm.domain,
-        // reutiliza a coluna domain para descrição curta no seed
+        description: perm.description,
       },
-    });
-    // Atualiza descrição via update dedicado (coluna description existe no modelo)
-    await prisma.permission.update({
-      where: { code: perm.code },
-      data: { domain: perm.domain },
     });
   }
 
@@ -39,31 +34,25 @@ async function main(): Promise<void> {
       create: { name: roleName, isSystem: true, organizationId: null },
     });
 
-    // Vincula permissões ao papel (relação muitos-para-muitos)
+    // Vincula permissões ao papel (N-N via RolePermission)
     for (const code of permCodes) {
       const perm = await prisma.permission.findUnique({ where: { code } });
       if (!perm) {
         throw new Error(`Permissão não encontrada no seed: ${code}`);
       }
-      const existing = await prisma.rolePermission.findFirst({
-        where: { roleId: role.id, permissionId: perm.id },
+      await prisma.rolePermission.upsert({
+        where: {
+          roleId_permissionId: { roleId: role.id, permissionId: perm.id },
+        },
+        update: {},
+        create: { roleId: role.id, permissionId: perm.id },
       });
-      if (!existing) {
-        await prisma.rolePermission.create({
-          data: { roleId: role.id, permissionId: perm.id },
-        });
-      }
     }
   }
 
   // 3. Administrador central inicial (apenas local/dev)
   const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
   const adminPassword = process.env.ADMIN_PASSWORD ?? "ChangeMe!2026";
-
-  const adminRole = await prisma.role.findFirst({
-    where: { name: "PLATFORM_ADMIN", isSystem: true },
-  });
-  if (!adminRole) throw new Error("Papel PLATFORM_ADMIN não encontrado.");
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
@@ -77,8 +66,8 @@ async function main(): Promise<void> {
     },
   });
 
-  console.log(`Seed concluído. Admin local: ${adminEmail}`);
-  console.log("AVISO: altere a password em produção (definir ADMIN_EMAIL/ADMIN_PASSWORD).");
+  console.log(`Seed concluído. Admin local: ${admin.email}`);
+  console.log("AVISO: em produção, definir ADMIN_EMAIL/ADMIN_PASSWORD e alterar a password inicial.");
 }
 
 main()
