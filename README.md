@@ -28,14 +28,19 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 ## Estado do projeto
 
 - [x] Parte 1 — Fundação + Domínio 1 (Utilizadores e Organizações): MER e schema Prisma
-- [ ] Parte 2 — Domínio 2: Eventos e Sessões
-- [ ] Parte 3 — Domínio 3: Bilhetes e Inventário
-- [ ] Parte 4 — Venda e Checkout
-- [ ] Parte 5 — Pagamentos e Finanças
-- [ ] Parte 6 — Bilheteira Física
-- [ ] Parte 7 — Controlo de Acesso
+- [x] Parte 2 — Domínio 2: Eventos e Sessões (Event, EventSession, Venue)
+- [x] Parte 3 — Domínio 3: Bilhetes e Inventário (TicketType, TicketBatch, SeatMap, Seat, InventoryHold)
+- [ ] Parte 4 — Domínio 4: Venda e Checkout
+- [ ] Parte 5 — Domínio 5: Pagamentos e Finanças
+- [ ] Parte 6 — Domínio 6: Bilheteira Física
+- [ ] Parte 7 — Domínio 7: Controlo de Acesso
 - [ ] Partes 8-12 — Antifraude, Administração, Notificações, Relatórios, UX
 
 ## Princípios estruturais
 
 Multiempresa (isolamento por organização) · Internacionalização · Integração · Segurança · Rastreabilidade · Escalabilidade · Modularidade · Integridade · Configurabilidade
+
+## Documentação por domínio
+
+- [docs/dominio-2-eventos.md](docs/dominio-2-eventos.md)
+- [docs/dominio-3-bilhetes-inventario.md](docs/dominio-3-bilhetes-inventario.md)
