@@ -33,7 +33,7 @@ Plataforma internacional de gestão de eventos, bilhética, pagamentos e control
 - [x] Parte 4 — Domínio 4: Venda e Checkout (Order, OrderLine, OrderAttendee, SalesChannel)
 - [x] Parte 5 — Domínio 5: Pagamentos e Finanças (Payment, PaymentAttempt, Refund, Chargeback, Settlement, FinancialReserve, FinancialLedgerEntry)
 - [x] Parte 6 — Domínio 6: Bilheteira Física (BoxOfficeStation, CashShift, CashMovement, CashDeposit)
-- [ ] Parte 7 — Domínio 7: Controlo de Acesso
+- [x] Parte 7 — Domínio 7: Controlo de Acesso (Ticket, TicketTransferRequest, AccessGate, AccessEvent)
 - [ ] Partes 8-12 — Antifraude, Administração, Notificações, Relatórios, UX
 
 ## Princípios estruturais
@@ -47,3 +47,4 @@ Multiempresa (isolamento por organização) · Internacionalização · Integra�
 - [docs/dominio-4-venda-checkout.md](docs/dominio-4-venda-checkout.md)
 - [docs/dominio-5-pagamentos-financas.md](docs/dominio-5-pagamentos-financas.md)
 - [docs/dominio-6-bilheteira-fisica.md](docs/dominio-6-bilheteira-fisica.md)
+- [docs/dominio-7-controlo-acesso.md](docs/dominio-7-controlo-acesso.md)
