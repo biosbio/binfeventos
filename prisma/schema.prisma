@@ -36,6 +36,8 @@ model Organization {
   sessions    Session[]
   auditLogs   AuditLog[]
   events      Event[]
+  venues      Venue[]
+  ticketTypes TicketType[]
 
   @@map("organizations")
 }
@@ -125,16 +127,15 @@ model AuditLog {
 // Parte 2 — Domínio 2: Eventos e Sessões
 // ============================================================
 
-// Estados do ciclo de vida do evento (conforme documentação mestra)
 enum EventStatus {
-  DRAFT          // Em preparação
-  PUBLISHED      // Publicado
-  SUSPENDED      // Suspenso
-  SOLD_OUT       // Esgotado
-  POSTPONED      // Adiado
-  CANCELLED      // Cancelado
-  COMPLETED      // Concluído
-  CLOSED         // Encerrado
+  DRAFT
+  PUBLISHED
+  SUSPENDED
+  SOLD_OUT
+  POSTPONED
+  CANCELLED
+  COMPLETED
+  CLOSED
 }
 
 enum EventCategory {
@@ -147,7 +148,6 @@ enum EventCategory {
   OTHER
 }
 
-// Recinto/localização física onde o evento decorre
 model Venue {
   id             String  @id @default(uuid()) @db.Uuid
   organizationId String  @db.Uuid
@@ -161,11 +161,11 @@ model Venue {
 
   organization Organization  @relation(fields: [organizationId], references: [id])
   sessions     EventSession[]
+  seatMaps     SeatMap[]
 
   @@map("venues")
 }
 
-// Evento: unidade comercial e de divulgação
 model Event {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @db.Uuid
@@ -176,7 +176,6 @@ model Event {
   coverImageUrl  String?
   responsibleUserId String?    @db.Uuid
   status         EventStatus  @default(DRAFT)
-  // Regras de entrada e condições comerciais
   entryRules     String?
   terms          String?
   publishedAt    DateTime?
@@ -185,26 +184,207 @@ model Event {
 
   organization Organization   @relation(fields: [organizationId], references: [id])
   sessions     EventSession[]
+  ticketTypes  TicketType[]
 
   @@unique([organizationId, slug])
   @@map("events")
 }
 
-// Sessão: data/horário concreto do evento (evento de data única ou múltiplas sessões)
 model EventSession {
-  id        String   @id @default(uuid()) @db.Uuid
-  eventId   String   @db.Uuid
-  venueId   String?  @db.Uuid
-  name      String?  // ex: "Noite 1" (opcional para sessões únicas)
-  startsAt  DateTime
-  endsAt    DateTime
-  // Abertura e fecho de portas
+  id           String   @id @default(uuid()) @db.Uuid
+  eventId      String   @db.Uuid
+  venueId      String?  @db.Uuid
+  name         String?
+  startsAt     DateTime
+  endsAt       DateTime
   doorsOpenAt  DateTime?
-  createdAt DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   event Event  @relation(fields: [eventId], references: [id])
   venue Venue? @relation(fields: [venueId], references: [id])
+  inventory TicketInventory[]
+  holds      InventoryHold[]
 
   @@index([eventId, startsAt])
   @@map("event_sessions")
+}
+
+// ============================================================
+// Parte 3 — Domínio 3: Bilhetes e Inventário
+// ============================================================
+
+// Categoria do bilhete: Normal, VIP, Premium, Estudante, Criança,
+// Gratuito, Convite, Acesso especial (documentação mestra, secção 10)
+enum TicketCategory {
+  NORMAL
+  VIP
+  PREMIUM
+  STUDENT
+  CHILD
+  FREE
+  INVITE
+  SPECIAL_ACCESS
+}
+
+enum TicketTypeStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+// Tipo de bilhete: preço base e regras próprias por evento
+model TicketType {
+  id             String         @id @default(uuid()) @db.Uuid
+  eventId        String         @db.Uuid
+  organizationId String         @db.Uuid
+  name           String
+  category       TicketCategory @default(NORMAL)
+  description    String?
+  basePriceCents Int            @default(0)
+  currency       String         @default("AOA")
+  // Regras próprias: documentos exigidos, idade mínima, condições de acesso
+  rules          Json?
+  requiresIdentity Boolean      @default(true) // identificação obrigatória do titular
+  status         TicketTypeStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  event          Event          @relation(fields: [eventId], references: [id])
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  batches        TicketBatch[]
+  inventory      TicketInventory[]
+  seats          Seat[]
+
+  @@index([eventId])
+  @@map("ticket_types")
+}
+
+enum BatchStatus {
+  SCHEDULED // antes do início da comercialização
+  OPEN      // à venda
+  PAUSED    // suspenso pelo organizador
+  CLOSED    // encerrado
+  SOLD_OUT  // esgotado (automático)
+}
+
+// Lote: período de comercialização, quantidade e limites por comprador
+model TicketBatch {
+  id           String      @id @default(uuid()) @db.Uuid
+  ticketTypeId String      @db.Uuid
+  name         String
+  quantity     Int
+  // Preço do lote em cêntimos; null = usar basePriceCents do tipo
+  priceCents   Int?
+  startsAt     DateTime    // início da comercialização
+  endsAt       DateTime    // fim da comercialização
+  maxPerBuyer  Int         @default(10) // limite por comprador
+  status       BatchStatus @default(SCHEDULED)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  ticketType TicketType       @relation(fields: [ticketTypeId], references: [id])
+  inventory  TicketInventory[]
+
+  @@index([ticketTypeId, status])
+  @@map("ticket_batches")
+}
+
+// Estado das reservas temporárias (documentação mestra, secção 11)
+enum HoldStatus {
+  AVAILABLE       // disponível
+  RESERVED        // reservado temporariamente
+  PENDING_PAYMENT // pagamento pendente
+  VERIFYING       // em verificação de pagamento
+  CONFIRMED       // venda confirmada
+  EXPIRED         // expirado
+  CANCELLED       // cancelado
+}
+
+// Núcleo comum de inventário: disponibilidade por sessão + tipo + lote.
+// Atualizado transacionalmente; protege contra venda duplicada.
+model TicketInventory {
+  id           String @id @default(uuid()) @db.Uuid
+  sessionId    String @db.Uuid
+  ticketTypeId String @db.Uuid
+  batchId      String @db.Uuid
+
+  totalQuantity     Int @default(0) // quantidade atribuída ao lote
+  reservedQuantity  Int @default(0) // em reserva temporária ativa
+  soldQuantity      Int @default(0) // vendas confirmadas
+  // disponibilidade = total - reserved - sold (calculada em transação)
+
+  session    EventSession @relation(fields: [sessionId], references: [id])
+  ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
+  batch      TicketBatch  @relation(fields: [batchId], references: [id])
+
+  @@unique([sessionId, ticketTypeId, batchId])
+  @@map("ticket_inventory")
+}
+
+// Reserva temporária de inventário durante a compra.
+// Prazo controlado pelo servidor (SEC: nunca confiar no cliente).
+model InventoryHold {
+  id           String     @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  sessionId    String     @db.Uuid
+  ticketTypeId String     @db.Uuid
+  batchId      String     @db.Uuid
+  status       HoldStatus @default(RESERVED)
+  quantity     Int
+  // Reserva exclusiva e idempotência: impede duplicação de reservas
+  idempotencyKey String?  @unique
+  expiresAt    DateTime
+  releasedAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  session    EventSession @relation(fields: [sessionId], references: [id])
+  ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
+
+  @@index([sessionId, status])
+  @@index([expiresAt]) // varrimento de expiração
+  @@map("inventory_holds")
+}
+
+// Mapa de lugares: por sessão/recinto (lugares numerados no MVP)
+model SeatMap {
+  id        String   @id @default(uuid()) @db.Uuid
+  sessionId String   @db.Uuid
+  venueId   String   @db.Uuid
+  name      String
+  createdAt DateTime @default(now())
+
+  session EventSession @relation(fields: [sessionId], references: [id])
+  venue   Venue        @relation(fields: [venueId], references: [id])
+  seats   Seat[]
+
+  @@unique([sessionId, venueId])
+  @@map("seat_maps")
+}
+
+enum SeatStatus {
+  AVAILABLE
+  RESERVED // reserva temporária ativa
+  SOLD     // venda confirmada
+  BLOCKED  // bloqueado pelo organizador (visão obstruída, etc.)
+}
+
+// Lugar individual numerado: setor, fila e lugar
+model Seat {
+  id           String     @id @default(uuid()) @db.Uuid
+  seatMapId    String     @db.Uuid
+  ticketTypeId String?    @db.Uuid // tipo atribuído ao lugar
+  section      String
+  row          String
+  label        String     // número/código do lugar
+  status       SeatStatus @default(AVAILABLE)
+  holdId       String?    @db.Uuid // reserva temporária que protege o lugar
+  expiresAt    DateTime?  // expiração da reserva do lugar
+
+  seatMap    SeatMap     @relation(fields: [seatMapId], references: [id])
+  ticketType TicketType? @relation(fields: [ticketTypeId], references: [id])
+
+  @@unique([seatMapId, section, row, label])
+  @@index([seatMapId, status])
+  @@map("seats")
 }
