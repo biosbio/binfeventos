@@ -191,7 +191,7 @@ export async function changePassword(
     select: { platformRole: true, mfaEnabled: true, mfaSecret: true },
   });
   if (account?.platformRole === "PLATFORM_ADMIN") {
-    if (!account.mfaEnabled || !account.mfaSecret || !totpCode || !/^\\d{6}$/.test(totpCode) ||
+    if (!account.mfaEnabled || !account.mfaSecret || !totpCode || !/^\d{6}$/.test(totpCode) ||
         !authenticator.verify({ token: totpCode, secret: decryptMfaSecret(account.mfaSecret) })) {
       throw new AppError("INVALID_MFA", 401, "Confirme a alteração com o código da aplicação autenticadora.");
     }
