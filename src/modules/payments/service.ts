@@ -84,7 +84,6 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     throw new BusinessRuleError("Multicaixa Express só aceita encomendas em AOA.");
   }
 
-  // Idempotência da tentativa
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
   const existingAttempt = await prisma.paymentAttempt.findUnique({
     where: { idempotencyKey: attemptKey },
@@ -100,7 +99,6 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
-  // Payment da encomenda (um por prestador; tentativas dentro dele)
   let payment = await prisma.payment.findFirst({
     where: { orderId: order.id, providerId: provider.id },
   });
@@ -112,17 +110,14 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
         providerId: provider.id,
         method: input.method,
         status: "CREATED",
-        // Valor SEMPRE da encomenda (server-side); cliente não envia montante
         amountCents: order.totalCents,
         currency: order.currency,
       },
     });
   }
 
-  const nextAttemptNumber =
-    (await prisma.paymentAttempt.count({ where: { paymentId: payment.id } })) + 1;
-
-  // Chama o adaptador (configuração resolvida no backend)
+  // Regista o resultado do prestador sem poder reabrir uma encomenda cancelada.
+  // O lock serializa o número de tentativa e a alteração de estado.
   const result = await adapter.initiate({
     paymentId: payment.id,
     amountCents: order.totalCents,
@@ -133,44 +128,68 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   });
 
   const paymentId = payment.id;
-  await prisma.$transaction(async (tx) => {
-    // Opção B: nova tentativa bloqueia as anteriores ativas
+  const statusFromProvider = PROVIDER_STATUS_MAP[result.status] as never;
+  const terminalDecline = ["DECLINED", "CANCELLED", "EXPIRED"].includes(result.status);
+  const attached = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${paymentId}::uuid FOR UPDATE`;
+    const attemptNumber = (await tx.paymentAttempt.count({ where: { paymentId } })) + 1;
     await tx.paymentAttempt.updateMany({
       where: { paymentId, status: "ACTIVE" },
-      data: { status: "BLOCKED" },
+      data: { status: "BLOCKED", finishedAt: new Date() },
     });
-
     await tx.paymentAttempt.create({
       data: {
         paymentId,
-        attemptNumber: nextAttemptNumber,
-        status: "ACTIVE",
+        attemptNumber,
+        status: terminalDecline ? "FAILED" : "ACTIVE",
+        finishedAt: terminalDecline ? new Date() : null,
         idempotencyKey: attemptKey,
         providerRef: result.providerRef,
       },
     });
-
     await tx.payment.update({
       where: { id: paymentId },
       data: {
-        status: PROVIDER_STATUS_MAP[result.status] as never,
+        status: result.status === "CONFIRMED" ? "PROCESSING" : statusFromProvider,
         providerRef: result.providerRef,
         providerRawPayload: result.rawPayload as never,
       },
     });
 
-    await tx.order.update({
-      where: { id: order.id },
+    const orderClaim = await tx.order.updateMany({
+      where: { id: order.id, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
       data: { status: "PENDING_PAYMENT" },
     });
+    if (orderClaim.count !== 1) {
+      if (!terminalDecline) {
+        await tx.payment.updateMany({
+          where: { id: paymentId, status: { not: "DECLINED" } },
+          data: { status: "UNDER_REVIEW" },
+        });
+      }
+      return false;
+    }
 
     if (order.holdId) {
-      // Enquanto não há resultado definitivo, inventário protegido
-      await tx.inventoryHold.update({
-        where: { id: order.holdId },
-        data: { status: "PENDING_PAYMENT" },
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: {
+          id: order.holdId,
+          organizationId: order.organizationId,
+          status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+        },
+        data: { status: result.status === "UNKNOWN" ? "VERIFYING" : "PENDING_PAYMENT" },
       });
+      if (holdClaim.count !== 1) {
+        if (!terminalDecline) {
+          await tx.payment.updateMany({
+            where: { id: paymentId, status: { not: "DECLINED" } },
+            data: { status: "UNDER_REVIEW" },
+          });
+        }
+        return false;
+      }
     }
+    return true;
   });
 
   await writeAudit({
@@ -179,11 +198,19 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     action: "payment.initiated",
     after: sanitizeForAudit({
       paymentId,
-      attempt: nextAttemptNumber,
       provider: provider.code,
       amountCents: order.totalCents,
+      outcomeAttachedToOrder: attached,
+      providerStatus: result.status,
     }),
   });
+  if (!attached) {
+    throw new BusinessRuleError("A encomenda foi alterada durante a iniciação. O resultado do prestador permanece em revisão.");
+  }
+
+  if (result.status === "CONFIRMED") {
+    await confirmPayment(result.providerRef, result.rawPayload, provider.code);
+  }
 
   return {
     paymentId,
