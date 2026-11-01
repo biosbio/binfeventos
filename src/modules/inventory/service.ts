@@ -178,6 +178,14 @@ export async function transitionBatch(
 
 /** Consultar disponibilidade (sem valores sensíveis; leitura pública do marketplace). */
 export async function getAvailability(sessionId: string) {
+  const session = await prisma.eventSession.findUnique({
+    where: { id: sessionId },
+    include: { event: { select: { status: true } } },
+  });
+  if (!session || session.event.status !== "PUBLISHED") {
+    throw new NotFoundError("Sessão");
+  }
+
   const rows = await prisma.ticketInventory.findMany({
     where: { sessionId },
     include: {
