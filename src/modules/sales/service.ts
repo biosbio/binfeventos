@@ -81,6 +81,9 @@ export async function createOrder(
   // Hold válido da organização do contexto
   const hold = await prisma.inventoryHold.findUnique({ where: { id: input.holdId } });
   if (!hold || hold.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
+  if (hold.userId !== ctx.userId && !ctx.permissions.has("boxoffice:sell")) {
+    throw new ForbiddenError("hold-not-owned");
+  }
   if (hold.status !== "RESERVED") {
     throw new ConflictError(`Reserva em estado ${hold.status}.`);
   }
