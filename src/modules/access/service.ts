@@ -105,7 +105,9 @@ export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<st
     include: { order: { select: { buyerUserId: true } } },
   });
   if (!ticket || ticket.organizationId !== ctx.organizationId) throw new NotFoundError("Bilhetes");
-  if (ticket.order.buyerUserId !== ctx.userId && !ctx.permissions.has("ticket:read")) {
+  // Permissão operacional de leitura não concede poder para rotacionar
+  // o QR de um comprador. Apenas o comprador pode pedir novo token.
+  if (ticket.order.buyerUserId !== ctx.userId) {
     throw new ForbiddenError("not-ticket-holder");
   }
   if (ticket.status !== "ISSUED" && ticket.status !== "USED") {
@@ -297,8 +299,12 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (!ticket) return deny("INVALID_QR");
   if (ticket.organizationId !== ctx.organizationId) return deny("INVALID_QR");
 
-  if (ticket.status === "CANCELLED") return deny("TICKET_CANCELLED");
+  if (ticket.order.status !== "CONFIRMED" && ticket.order.status !== "PARTIALLY_REFUNDED") {
+    return deny("TICKET_CANCELLED");
+  }
+  if (ticket.status === "CANCELLED" || ticket.status === "EXPIRED") return deny("TICKET_CANCELLED");
   if (ticket.status === "REVOKED") return deny("TICKET_REVOKED");
+  if (ticket.status !== "ISSUED" && ticket.status !== "USED") return deny("TICKET_CANCELLED");
 
   // Sessão correta (WRONG_SESSION)
   if (gate.sessionId && gate.sessionId !== ticket.session.id) {
@@ -312,8 +318,15 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   }
 
   if (gate.gateType === "EXIT") {
-    // Saída: regista e guarda lastExitAt
-    await prisma.$transaction(async (tx) => {
+    if (ticket.status !== "USED") return deny("ALREADY_USED");
+    // Saída só é registada uma vez por entrada; update condicional evita
+    // duas leituras concorrentes criarem duas saídas válidas.
+    const exited = await prisma.$transaction(async (tx) => {
+      const claim = await tx.ticket.updateMany({
+        where: { id: ticket.id, status: "USED" },
+        data: { lastExitAt: now },
+      });
+      if (claim.count !== 1) return false;
       await tx.accessEvent.create({
         data: {
           organizationId,
@@ -325,11 +338,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
           identityVerified: input.identityVerified,
         },
       });
-      await tx.ticket.update({
-        where: { id: ticket.id },
-        data: { lastExitAt: now },
-      });
+      return true;
     });
+    if (!exited) return deny("ALREADY_USED");
     return { allowed: true, action: "EXIT_RECORDED", holder: ticket.orderAttendee?.fullName };
   }
 
@@ -337,7 +348,17 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (ticket.status === "USED") {
     // Reentrada só com permissão e saída registada
     if (ticket.reentryAllowed && ticket.lastExitAt) {
-      await prisma.$transaction(async (tx) => {
+      const reentered = await prisma.$transaction(async (tx) => {
+        const claim = await tx.ticket.updateMany({
+          where: {
+            id: ticket.id,
+            status: "USED",
+            reentryAllowed: true,
+            lastExitAt: ticket.lastExitAt,
+          },
+          data: { entryCount: { increment: 1 }, lastExitAt: null },
+        });
+        if (claim.count !== 1) return false;
         await tx.accessEvent.create({
           data: {
             organizationId,
@@ -349,11 +370,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
             identityVerified: input.identityVerified,
           },
         });
-        await tx.ticket.update({
-          where: { id: ticket.id },
-          data: { entryCount: { increment: 1 }, status: "USED" },
-        });
+        return true;
       });
+      if (!reentered) return deny("ALREADY_USED");
       return { allowed: true, action: "REENTRY_GRANTED", holder: ticket.orderAttendee?.fullName };
     }
     return deny("ALREADY_USED");
@@ -365,7 +384,12 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   }
 
   // Entrada concedida (transação atômica: ninguça passa duas vezes)
-  await prisma.$transaction(async (tx) => {
+  const entered = await prisma.$transaction(async (tx) => {
+    const claim = await tx.ticket.updateMany({
+      where: { id: ticket.id, status: "ISSUED" },
+      data: { status: "USED", entryCount: { increment: 1 } },
+    });
+    if (claim.count !== 1) return false;
     await tx.accessEvent.create({
       data: {
         organizationId,
@@ -377,11 +401,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
         identityVerified: input.identityVerified,
       },
     });
-    await tx.ticket.update({
-      where: { id: ticket.id },
-      data: { status: "USED", entryCount: { increment: 1 } },
-    });
+    return true;
   });
+  if (!entered) return deny("ALREADY_USED");
 
   await writeAudit({
     organizationId,
