@@ -150,21 +150,27 @@ export async function completeRefund(
   ctx: AuthContext,
   input: { refundId: string; providerRef: string; evidenceNotes: string },
 ) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("refund:approve")) throw new ForbiddenError("refund:approve");
 
   const refund = await prisma.refund.findUnique({ where: { id: input.refundId } });
-  if (!refund || refund.organizationId !== ctx.organizationId) throw new NotFoundError("Reembolso");
+  if (!refund || refund.organizationId !== organizationId) throw new NotFoundError("Reembolso");
   if (refund.status !== "APPROVED" && refund.status !== "PROCESSING") {
     throw new ConflictError("Apenas reembolsos aprovados podem ser concluídos.");
   }
+  const orderId = orderId;
+  const paymentId = paymentId;
+  if (!orderId || !paymentId) {
+    throw new BusinessRuleError("Reembolso sem encomenda ou pagamento associado.");
+  }
 
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${refund.orderId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
     const claimed = await tx.refund.updateMany({
       where: {
         id: refund.id,
-        organizationId: ctx.organizationId,
+        organizationId: organizationId,
         status: { in: ["APPROVED", "PROCESSING"] },
       },
       data: { status: "COMPLETED", providerRef: input.providerRef },
@@ -172,7 +178,7 @@ export async function completeRefund(
     if (claimed.count !== 1) throw new ConflictError("Reembolso já foi concluído.");
 
     const order = await tx.order.findUnique({
-      where: { id: refund.orderId },
+      where: { id: orderId },
       select: { totalCents: true, status: true },
     });
     if (!order || !["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(order.status)) {
@@ -180,14 +186,14 @@ export async function completeRefund(
     }
 
     const completed = await tx.refund.aggregate({
-      where: { orderId: refund.orderId, status: "COMPLETED" },
+      where: { orderId: orderId, status: "COMPLETED" },
       _sum: { amountCents: true },
     });
     const fully = (completed._sum.amountCents ?? 0) >= order.totalCents;
     const updatedOrder = await tx.order.updateMany({
       where: {
-        id: refund.orderId,
-        organizationId: ctx.organizationId,
+        id: orderId,
+        organizationId: organizationId,
         status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
       },
       data: { status: fully ? "REFUNDED" : "PARTIALLY_REFUNDED" },
@@ -196,7 +202,7 @@ export async function completeRefund(
 
     await tx.payment.updateMany({
       where: {
-        id: refund.paymentId,
+        id: paymentId,
         status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED"] },
       },
       data: { status: fully ? "REFUNDED" : "PARTIALLY_REFUNDED" },
@@ -207,7 +213,7 @@ export async function completeRefund(
         organizationId: refund.organizationId,
         type: "REFUND",
         amountCents: -refund.amountCents,
-        orderId: refund.orderId,
+        orderId: orderId,
         refundId: refund.id,
         description: "Devolução financeira concluída e comprovada.",
         approvedByUserId: ctx.userId,
@@ -216,7 +222,7 @@ export async function completeRefund(
 
     if (fully) {
       await tx.ticket.updateMany({
-        where: { orderId: refund.orderId, status: { in: ["ISSUED", "USED", "TRANSFERRED"] } },
+        where: { orderId: orderId, status: { in: ["ISSUED", "USED", "TRANSFERRED"] } },
         data: { status: "CANCELLED" },
       });
     }
@@ -224,7 +230,7 @@ export async function completeRefund(
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: organizationId,
     actorUserId: ctx.userId,
     action: "refund.completed",
     after: sanitizeForAudit({
