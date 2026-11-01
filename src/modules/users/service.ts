@@ -161,7 +161,7 @@ export async function disableMfa(userId: string, totpCode: string): Promise<void
   if (!user?.mfaEnabled || !user.mfaSecret) {
     throw new BusinessRuleError("MFA não está ativado.");
   }
-  if (!authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({
