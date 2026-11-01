@@ -41,33 +41,58 @@ export async function requestRefund(ctx: AuthContext, input: RequestRefundInput)
   const payment = order.payments[0];
   if (!payment) throw new BusinessRuleError("Sem pagamento confirmado para reembolsar.");
 
-  // Não reembolsa mais do que foi pago menos reembolsos anteriores
-  const previousRefunds = await prisma.refund.aggregate({
-    where: { orderId: order.id, status: { in: ["REQUESTED", "UNDER_ANALYSIS", "APPROVED", "PROCESSING", "COMPLETED"] } },
-    _sum: { amountCents: true },
-  });
-  const alreadyRefunded = previousRefunds._sum.amountCents ?? 0;
-  const refundable = payment.amountCents - alreadyRefunded;
+  // Serializa pedidos de reembolso por encomenda para impedir que
+  // pedidos concorrentes ultrapassem o montante efetivamente pago.
+  const refund = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
 
-  if (input.amountCents > refundable) {
-    throw new BusinessRuleError(
-      `Valor máximo reembolsável: ${refundable} cêntimos (já reembolsado: ${alreadyRefunded}).`
-    );
-  }
+    const freshOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { organizationId: true, status: true },
+    });
+    const freshPayment = await tx.payment.findUnique({
+      where: { id: payment.id },
+      select: { amountCents: true, status: true },
+    });
+    if (
+      !freshOrder ||
+      freshOrder.organizationId !== ctx.organizationId ||
+      !["CONFIRMED", "PARTIALLY_REFUNDED"].includes(freshOrder.status) ||
+      !freshPayment ||
+      freshPayment.status !== "CONFIRMED"
+    ) {
+      throw new BusinessRuleError("A encomenda ou o pagamento já não é elegível para reembolso.");
+    }
 
-  const isTotal = input.amountCents === refundable;
+    const previousRefunds = await tx.refund.aggregate({
+      where: {
+        orderId: order.id,
+        status: { in: ["REQUESTED", "UNDER_ANALYSIS", "APPROVED", "PROCESSING", "COMPLETED"] },
+      },
+      _sum: { amountCents: true },
+    });
+    const alreadyRefunded = previousRefunds._sum.amountCents ?? 0;
+    const refundable = freshPayment.amountCents - alreadyRefunded;
 
-  const refund = await prisma.refund.create({
-    data: {
-      organizationId: ctx.organizationId,
-      orderId: order.id,
-      paymentId: payment.id,
-      amountCents: input.amountCents,
-      reason: input.reason,
-      status: "REQUESTED",
-      requestedByUserId: ctx.userId,
-    },
-    select: { id: true },
+    if (input.amountCents > refundable || refundable <= 0) {
+      throw new BusinessRuleError(
+        `Valor máximo reembolsável: ${Math.max(0, refundable)} cêntimos (já comprometido: ${alreadyRefunded}).`
+      );
+    }
+
+    const created = await tx.refund.create({
+      data: {
+        organizationId: ctx.organizationId!,
+        orderId: order.id,
+        paymentId: payment.id,
+        amountCents: input.amountCents,
+        reason: input.reason,
+        status: "REQUESTED",
+        requestedByUserId: ctx.userId,
+      },
+      select: { id: true },
+    });
+    return { ...created, isTotal: input.amountCents === refundable };
   });
 
   await writeAudit({
@@ -78,22 +103,20 @@ export async function requestRefund(ctx: AuthContext, input: RequestRefundInput)
       refundId: refund.id,
       orderId: order.id,
       amountCents: input.amountCents,
-      isTotal,
+      isTotal: refund.isTotal,
     }),
   });
 
-  return { refundId: refund.id, isTotal };
+  return { refundId: refund.id, isTotal: refund.isTotal };
 }
 
-/** Aprovar/rejeitar reembolso (segregação: aprovador ≠ solicitante). */
+/** Aprovar/rejeitar reembolso. Aprovação não significa que o dinheiro já foi devolvido. */
 export async function decideRefund(ctx: AuthContext, input: ApproveRefundInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("refund:approve")) throw new ForbiddenError("refund:approve");
 
   const refund = await prisma.refund.findUnique({ where: { id: input.refundId } });
   if (!refund || refund.organizationId !== ctx.organizationId) throw new NotFoundError("Reembolso");
-
-  // SEGREGAÇÃO: quem pediu não aprova (documento mestre, secção 11)
   if (refund.requestedByUserId === ctx.userId) {
     throw new BusinessRuleError("Segregação de funções: quem solicita não pode aprovar.");
   }
@@ -101,54 +124,86 @@ export async function decideRefund(ctx: AuthContext, input: ApproveRefundInput) 
     throw new ConflictError(`Reembolso em estado ${refund.status}.`);
   }
 
-  if (input.decision === "REJECT") {
-    await prisma.refund.update({
-      where: { id: refund.id },
-      data: { status: "REJECTED", approvedByUserId: ctx.userId },
-    });
-    await writeAudit({
+  const nextStatus = input.decision === "REJECT" ? "REJECTED" : "APPROVED";
+  const changed = await prisma.refund.updateMany({
+    where: {
+      id: refund.id,
       organizationId: ctx.organizationId,
-      actorUserId: ctx.userId,
-      action: "refund.rejected",
-      after: sanitizeForAudit({ refundId: refund.id }),
-    });
-    return { approved: false };
+      status: { in: ["REQUESTED", "UNDER_ANALYSIS"] },
+    },
+    data: { status: nextStatus, approvedByUserId: ctx.userId },
+  });
+  if (changed.count !== 1) throw new ConflictError("Reembolso já foi processado.");
+
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: input.decision === "REJECT" ? "refund.rejected" : "refund.approved",
+    after: sanitizeForAudit({ refundId: refund.id, notes: input.notes ?? null }),
+  });
+
+  return { approved: input.decision === "APPROVE", refundId: refund.id };
+}
+
+/** Regista a devolução efetiva após execução no prestador/banco. */
+export async function completeRefund(
+  ctx: AuthContext,
+  input: { refundId: string; providerRef: string; evidenceNotes: string },
+) {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (!ctx.permissions.has("refund:approve")) throw new ForbiddenError("refund:approve");
+
+  const refund = await prisma.refund.findUnique({ where: { id: input.refundId } });
+  if (!refund || refund.organizationId !== ctx.organizationId) throw new NotFoundError("Reembolso");
+  if (refund.status !== "APPROVED" && refund.status !== "PROCESSING") {
+    throw new ConflictError("Apenas reembolsos aprovados podem ser concluídos.");
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    await tx.refund.update({
-      where: { id: refund.id },
-      data: { status: "PROCESSING", approvedByUserId: ctx.userId },
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${refund.orderId}::uuid FOR UPDATE`;
+    const claimed = await tx.refund.updateMany({
+      where: {
+        id: refund.id,
+        organizationId: ctx.organizationId,
+        status: { in: ["APPROVED", "PROCESSING"] },
+      },
+      data: { status: "COMPLETED", providerRef: input.providerRef },
     });
+    if (claimed.count !== 1) throw new ConflictError("Reembolso já foi concluído.");
 
-    // Lançamento no livro-razão (imutável)
+    const order = await tx.order.findUnique({
+      where: { id: refund.orderId },
+      select: { totalCents: true, status: true },
+    });
+    if (!order || !["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(order.status)) {
+      throw new BusinessRuleError("A encomenda já não permite concluir este reembolso.");
+    }
+
+    const completed = await tx.refund.aggregate({
+      where: { orderId: refund.orderId, status: "COMPLETED" },
+      _sum: { amountCents: true },
+    });
+    const fully = (completed._sum.amountCents ?? 0) >= order.totalCents;
+    const updatedOrder = await tx.order.updateMany({
+      where: {
+        id: refund.orderId,
+        organizationId: ctx.organizationId,
+        status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+      },
+      data: { status: fully ? "REFUNDED" : "PARTIALLY_REFUNDED" },
+    });
+    if (updatedOrder.count !== 1) throw new ConflictError("Estado da encomenda foi alterado.");
+
     await tx.financialLedgerEntry.create({
       data: {
         organizationId: refund.organizationId,
         type: "REFUND",
-        amountCents: -refund.amountCents, // crédito
+        amountCents: -refund.amountCents,
         orderId: refund.orderId,
         refundId: refund.id,
-        description: `Reembolso aprovado por operador autorizado`,
+        description: "Devolução financeira concluída e comprovada.",
         approvedByUserId: ctx.userId,
       },
-    });
-
-    // Reembolso TOTAL: cancela bilhetes e ajusta encomenda
-    const order = await tx.order.findUnique({
-      where: { id: refund.orderId },
-      select: { totalCents: true },
-    });
-    const totalRefunded = await tx.refund.aggregate({
-      where: { orderId: refund.orderId, status: { in: ["COMPLETED", "PROCESSING"] } },
-      _sum: { amountCents: true },
-    });
-    void order;
-    const fully = (totalRefunded._sum.amountCents ?? 0) >= order!.totalCents;
-
-    await tx.order.update({
-      where: { id: refund.orderId },
-      data: fully ? { status: "REFUNDED" } : { status: "PARTIALLY_REFUNDED" },
     });
 
     if (fully) {
@@ -156,23 +211,22 @@ export async function decideRefund(ctx: AuthContext, input: ApproveRefundInput) 
         where: { orderId: refund.orderId, status: { in: ["ISSUED", "USED", "TRANSFERRED"] } },
         data: { status: "CANCELLED" },
       });
-      // Inventário não é reposto automaticamente: decisão comercial
-      // (repor = novo lote/quantidade). Registado para revisão.
     }
-
-    return tx.refund.update({
-      where: { id: refund.id },
-      data: { status: "COMPLETED" },
-      select: { id: true },
-    });
+    return { refundId: refund.id, fully };
   });
 
   await writeAudit({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "refund.completed",
-    after: sanitizeForAudit({ refundId: result.id, amountCents: refund.amountCents }),
+    after: sanitizeForAudit({
+      refundId: result.refundId,
+      amountCents: refund.amountCents,
+      providerRef: input.providerRef,
+      evidence: input.evidenceNotes,
+      fully: result.fully,
+    }),
   });
-
-  return { approved: true };
+  return { completed: true, fullyRefunded: result.fully };
 }
+
