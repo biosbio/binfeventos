@@ -56,7 +56,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
     // Job interno de expiração de reservas (chamado por cron/worker)
     if (path === "run-expiration") {
-      const auth = await requirePermission("inventory:read");
+      // A tarefa é global a todas as organizações; apenas o administrador
+      // central, com step-up MFA, pode executá-la manualmente.
+      const auth = await requirePermission("admin:platform");
       const { releaseExpiredHolds } = await import("@/modules/inventory/service");
       const result = await releaseExpiredHolds();
       return NextResponse.json({ ok: true, ...result, by: auth.userId });
