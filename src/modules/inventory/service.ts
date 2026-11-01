@@ -512,23 +512,20 @@ export async function releaseExpiredHolds(): Promise<{ released: number }> {
         },
         data: { reservedQuantity: { decrement: hold.quantity } },
       });
-      return linkedOrder && ["RESERVED", "PENDING_PAYMENT"].includes(linkedOrder.status)
-        ? linkedOrder.id
-        : null;
+      return {
+        orderId: linkedOrder && ["RESERVED", "PENDING_PAYMENT"].includes(linkedOrder.status)
+          ? linkedOrder.id
+          : null,
+      };
     });
 
-    if (expiredOrderId) {
+    if (expiredOrderId?.orderId) {
       await prisma.order.updateMany({
-        where: { id: expiredOrderId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+        where: { id: expiredOrderId.orderId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
         data: { status: "EXPIRED" },
       });
     }
-    // Contabiliza apenas quando o hold já ficou EXPIRED.
-    const current = await prisma.inventoryHold.findUnique({
-      where: { id: hold.id },
-      select: { status: true },
-    });
-    if (current?.status === "EXPIRED") released += 1;
+    if (expiredOrderId) released += 1;
   }
 
   return { released };
