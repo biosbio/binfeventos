@@ -114,7 +114,7 @@ export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" 
 /** Valida OTP e eleva apenas a sessão atual durante 10 minutos. */
 export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): Promise<void> {
   if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
-  if (!ctx.organizationId || !ctx.permissions.has("event:read")) throw new ForbiddenError("organizer-membership-required");
+  if (!ctx.organizationId || ctx.permissions.size === 0) throw new ForbiddenError("organizer-membership-required");
   const record = await prisma.panelVerificationCode.findFirst({
     where: { userId: ctx.userId, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
     orderBy: { createdAt: "desc" },
