@@ -152,6 +152,9 @@ export async function verifyAdminPanelMfa(
   totpCode: string,
 ): Promise<void> {
   if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("platform-admin-only");
+  if (rateLimit(`panel-admin-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de autenticação. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
     select: { passwordHash: true, mfaEnabled: true, mfaSecret: true },
