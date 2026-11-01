@@ -21,7 +21,7 @@ export const passwordSchema = z
 export const registerSchema = z.object({
   fullName: z.string().trim().min(3, "Nome completo obrigatório.").max(120),
   email: emailSchema,
-  phone: z.string().trim().min(7, "Telefone obrigatório.").max(20),
+  phone: z.string().trim().regex(/^\\+[1-9]\\d{7,14}$/, "Indique o telemóvel com indicativo internacional, por exemplo +245XXXXXXXXX."),
   password: passwordSchema,
 });
 
