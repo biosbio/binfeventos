@@ -73,6 +73,9 @@ export async function inviteMember(
   input: InviteMemberInput
 ): Promise<{ membershipId: string; invitedEmail: string }> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (input.roleName === "PLATFORM_ADMIN") {
+    throw new ForbiddenError("platform-admin-role-cannot-be-assigned-to-members");
+  }
 
   // Papel alvo pode ser de sistema OU da própria organização
   const role = await prisma.role.findFirst({
