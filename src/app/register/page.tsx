@@ -12,6 +12,7 @@ import Link from "next/link";
 export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export default function RegisterPage() {
       const res = await fetch("/api/users/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName, email, password }),
+        body: JSON.stringify({ fullName, email, phone, password }),
       });
       const data = (await res.json()) as { message?: string };
       if (!res.ok) {
@@ -79,6 +80,22 @@ export default function RegisterPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="phone">Telemóvel</label>
+            <input
+              id="phone"
+              type="tel"
+              required
+              minLength={7}
+              maxLength={20}
+              autoComplete="tel"
+              placeholder="+245 9XXXXXXXX"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <span className="form-help">Obrigatório para recuperação da conta por SMS.</span>
           </div>
 
           <div className="form-field">
