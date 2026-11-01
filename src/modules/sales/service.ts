@@ -297,11 +297,12 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
         where: { id: order.holdId },
         select: { status: true, quantity: true, sessionId: true, ticketTypeId: true, batchId: true },
       });
-      if (hold && hold.status === "PENDING_PAYMENT") {
-        await tx.inventoryHold.updateMany({
-          where: { id: order.holdId, status: "PENDING_PAYMENT" },
+      if (hold && ["RESERVED", "PENDING_PAYMENT"].includes(hold.status)) {
+        const released = await tx.inventoryHold.updateMany({
+          where: { id: order.holdId, status: hold.status },
           data: { status: "CANCELLED", releasedAt: new Date() },
         });
+        if (released.count !== 1) throw new ConflictError("A reserva já foi alterada.");
         await tx.ticketInventory.update({
           where: {
             sessionId_ticketTypeId_batchId: {
