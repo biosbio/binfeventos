@@ -549,7 +549,7 @@ export async function handleWebhook(
     const changed = await prisma.payment.updateMany({
       where: {
         id: payment.id,
-        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
       },
       data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
