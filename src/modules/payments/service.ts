@@ -99,33 +99,77 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
-  let payment = await prisma.payment.findFirst({
-    where: { orderId: order.id, providerId: provider.id },
-  });
-  if (!payment) {
-    payment = await prisma.payment.create({
-      data: {
-        organizationId: order.organizationId,
-        orderId: order.id,
-        providerId: provider.id,
-        method: input.method,
-        status: "CREATED",
-        amountCents: order.totalCents,
-        currency: order.currency,
-      },
+  // Um pagamento por encomenda/prestador; o advisory lock evita duas linhas
+  // concorrentes e a claim bloqueia uma segunda tentativa enquanto a primeira decorre.
+  const payment = await prisma.$transaction(async (tx) => {
+    const lockKey = `payment-init:${order.id}:${provider.id}`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    let current = await tx.payment.findFirst({
+      where: { orderId: order.id, providerId: provider.id },
     });
-  }
+    if (!current) {
+      current = await tx.payment.create({
+        data: {
+          organizationId: order.organizationId,
+          orderId: order.id,
+          providerId: provider.id,
+          method: input.method,
+          status: "CREATED",
+          amountCents: order.totalCents,
+          currency: order.currency,
+        },
+      });
+    }
+    const claimed = await tx.payment.updateMany({
+      where: {
+        id: current.id,
+        status: { in: ["CREATED", "DECLINED", "CANCELLED", "EXPIRED"] },
+      },
+      data: { status: "INITIATED" },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictError("Já existe uma tentativa de pagamento em curso ou em revisão.");
+    }
+    return current;
+  });
 
-  // Regista o resultado do prestador sem poder reabrir uma encomenda cancelada.
-  // O lock serializa o número de tentativa e a alteração de estado.
-  const result = await adapter.initiate({
+  // Se o adaptador falhar, o resultado pode ser incerto. Mantém o inventário
+  // protegido até revisão manual em vez de libertar uma venda possivelmente paga.
+  let result: Awaited<ReturnType<typeof adapter.initiate>>;
+  try {
+    result = await adapter.initiate({
     paymentId: payment.id,
     amountCents: order.totalCents,
     currency: order.currency,
     returnUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/checkout/return?order=${order.id}`,
     idempotencyKey: attemptKey,
     adapterConfig: (provider.adapterConfig ?? {}) as Record<string, unknown>,
-  });
+    });
+  } catch {
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: "INITIATED" },
+        data: { status: "UNDER_REVIEW" },
+      });
+      if (order.holdId) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            organizationId: order.organizationId,
+            status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: { status: "VERIFYING" },
+        });
+      }
+    });
+    await writeAudit({
+      organizationId: order.organizationId,
+      actorUserId: ctx.userId,
+      action: "payment.initiation_uncertain",
+      after: sanitizeForAudit({ paymentId: payment.id, provider: provider.code }),
+    });
+    throw new AppError("PAYMENT_PROVIDER_UNCERTAIN", 502, "Não foi possível confirmar a resposta do prestador. O pagamento ficou em revisão.");
+  }
 
   const paymentId = payment.id;
   const statusFromProvider = PROVIDER_STATUS_MAP[result.status] as never;
