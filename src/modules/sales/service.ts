@@ -268,6 +268,16 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
   if (!["DRAFT", "RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
     throw new ConflictError(`Encomenda em estado ${order.status} não pode ser cancelada aqui.`);
   }
+  const uncertainPayment = await prisma.payment.findFirst({
+    where: {
+      orderId: order.id,
+      status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+    },
+    select: { id: true },
+  });
+  if (uncertainPayment) {
+    throw new BusinessRuleError("Pagamento em curso ou em revisão. O cancelamento fica bloqueado até decisão financeira.");
+  }
 
   await prisma.$transaction(async (tx) => {
     const cancelled = await tx.order.updateMany({
