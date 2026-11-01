@@ -67,6 +67,9 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
   if (user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled) {
     throw new AppError("MFA_MISCONFIGURED", 500, "MFA obrigatório do administrador não está ativo. Contacte o suporte.");
   }
+  if (user.platformRole === "PLATFORM_ADMIN" && !process.env.MFA_ENCRYPTION_KEY) {
+    throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
+  }
 
   // MFA: só entra com código TOTP válido (SEC-01)
   if (user.mfaEnabled) {
