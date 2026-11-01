@@ -69,7 +69,7 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
       where: { status: "COMPLETED", ticket: { orderId } },
       select: { id: true },
     });
-    if (completedTransfer) return { tickets: [] };
+    if (completedTransfer) return { organizationId: order.organizationId, tickets: [] };
 
     const alreadyIssued = await tx.ticket.findMany({
       where: { orderId },
