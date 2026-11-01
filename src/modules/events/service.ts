@@ -220,7 +220,7 @@ export async function addSession(ctx: AuthContext, input: SessionInput) {
   await writeAudit({
     organizationId: event.organizationId,
     actorUserId: ctx.userId,
-    action: "session:manage",
+    action: "session.created",
     after: sanitizeForAudit({ sessionId: session.id, startsAt: input.startsAt.toISOString() }),
   });
 
