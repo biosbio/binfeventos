@@ -659,19 +659,38 @@ export async function handleWebhook(
   if (payload.status === "CONFIRMED") {
     await confirmPayment(payload.providerRef, payload.rawPayload, providerCode);
   } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
-    const changed = await prisma.payment.updateMany({
-      where: {
-        id: payment.id,
-        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
-      },
-      data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
-    });
-    if (changed.count === 1) {
-      await prisma.paymentAttempt.updateMany({
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${payment.id}::uuid FOR UPDATE`;
+      const changed = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+        },
+        data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
+      });
+      if (changed.count !== 1) return;
+      await tx.paymentAttempt.updateMany({
         where: { paymentId: payment.id, status: "ACTIVE" },
         data: { status: "FAILED", finishedAt: new Date() },
       });
-    }
+      const order = await tx.order.findUnique({
+        where: { id: payment.orderId },
+        select: { status: true, holdId: true },
+      });
+      if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: {
+            status: "PENDING_PAYMENT",
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        });
+      }
+    });
   } else if (payload.status === "UNKNOWN") {
     // Sem resultado definitivo: protege inventário e marca revisão sem
     // rebaixar um pagamento que outro webhook já confirmou.
