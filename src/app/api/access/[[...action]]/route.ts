@@ -112,8 +112,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
     // GET /api/access/tickets/{id}/qr
     if (action.length === 3 && action[0] === "tickets" && action[2] === "qr") {
       const auth = await requireAuth();
+      const ticketId = parse(z.string().uuid(), action[1]);
       const { getQrToken } = await import("@/modules/access/service");
-      const token = await getQrToken(auth, action[1]!);
+      const token = await getQrToken(auth, ticketId);
       return NextResponse.json({ ok: true, qrToken: token });
     }
 
