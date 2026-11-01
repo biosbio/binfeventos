@@ -43,6 +43,9 @@ EOF
   printf '\nCredenciais locais de desenvolvimento criadas em .env (ficheiro ignorado pelo Git).\n'
 fi
 
+# Inside the Compose network, PostgreSQL is reachable as the service name `db`.
+sed -i 's/@localhost:5432\//@db:5432\//g' .env
+
 npm install
 npx prisma generate
 npx prisma migrate deploy
