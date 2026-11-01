@@ -120,6 +120,35 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
   return { tickets: result.tickets };
 }
 
+/** Lista os bilhetes cujo titular atual é o utilizador autenticado. */
+export async function listMyTickets(ctx: AuthContext) {
+  const user = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { email: true },
+  });
+  if (!user) throw new NotFoundError("Utilizador");
+  return prisma.ticket.findMany({
+    where: {
+      status: { in: ["ISSUED", "USED"] },
+      OR: [
+        { holderUserId: ctx.userId },
+        { holderUserId: null, holderEmail: user.email.toLowerCase() },
+      ],
+    },
+    orderBy: { issuedAt: "desc" },
+    select: {
+      id: true,
+      ticketNumber: true,
+      status: true,
+      holderName: true,
+      holderEmail: true,
+      sessionId: true,
+      ticketTypeId: true,
+      issuedAt: true,
+    },
+  });
+}
+
 /** Reemite o token QR de um bilhete (apenas titular autenticado). */
 export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<string> {
   return prisma.$transaction(async (tx) => {
