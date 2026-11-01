@@ -130,8 +130,13 @@ export async function transitionEvent(
 
   // Defesa em profundidade: mesmo que uma rota seja alterada por engano,
   // nenhum organizador consegue publicar diretamente um evento.
-  if (to === "PUBLISHED" && ctx.platformRole !== "PLATFORM_ADMIN") {
-    throw new ForbiddenError("admin-publication-approval-required");
+  if (to === "PUBLISHED") {
+    if (ctx.platformRole !== "PLATFORM_ADMIN") {
+      throw new ForbiddenError("admin-publication-approval-required");
+    }
+    if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
+      throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+    }
   }
 
   if (from === to) throw new ConflictError(`Evento já está ${transitionLabel(to)}.`);
