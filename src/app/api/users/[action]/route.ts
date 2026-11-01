@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
+import { z } from "zod";
 
 // ============================================================
 // Módulo users — rotas API (App Router do Next.js)
@@ -23,7 +24,7 @@ function clientIp(req: NextRequest): string {
 }
 
 /** Valida o corpo contra um schema Zod (SEC-09). */
-function parseBody<T>(schema: { parse: (d: unknown) => T }, data: unknown): T {
+function parseBody<T>(schema: z.ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
   if (!result.success) {
     throw new ValidationError(result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
@@ -37,21 +38,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   try {
     switch (action) {
       case "register": {
-        const body = parseBody((await import("./schemas")).registerSchema, await req.json());
-        const { registerUser } = await import("./service");
+        const body = parseBody((await import("@/modules/users/schemas")).registerSchema, await req.json());
+        const { registerUser } = await import("@/modules/users/service");
         const { id } = await registerUser(body, clientIp(req));
         return NextResponse.json({ ok: true, userId: id }, { status: 201 });
       }
 
       case "login": {
         const body = parseBody((await import("./schemas")).loginSchema, await req.json());
-        const { loginUser } = await import("./service");
+        const { loginUser } = await import("@/modules/users/service");
         const result = await loginUser(body, clientIp(req));
         return NextResponse.json({ ok: true, ...result });
       }
 
       case "logout": {
-        const { logoutUser } = await import("./service");
+        const { logoutUser } = await import("@/modules/users/service");
         await logoutUser();
         return NextResponse.json({ ok: true });
       }
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       case "mfa/setup": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
-        const { beginEnableMfa } = await import("./service");
+        const { beginEnableMfa } = await import("@/modules/users/service");
         const result = await beginEnableMfa(ctxAuth.userId);
         return NextResponse.json({ ok: true, ...result });
       }
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
         const body = parseBody((await import("./schemas")).enableMfaSchema, await req.json());
-        const { confirmEnableMfa } = await import("./service");
+        const { confirmEnableMfa } = await import("@/modules/users/service");
         await confirmEnableMfa(ctxAuth.userId, body.totpCode);
         return NextResponse.json({ ok: true });
       }
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
         const body = parseBody((await import("./schemas")).disableMfaSchema, await req.json());
-        const { disableMfa } = await import("./service");
+        const { disableMfa } = await import("@/modules/users/service");
         await disableMfa(ctxAuth.userId, body.totpCode);
         return NextResponse.json({ ok: true });
       }
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
         const body = parseBody((await import("./schemas")).changePasswordSchema, await req.json());
-        const { changePassword } = await import("./service");
+        const { changePassword } = await import("@/modules/users/service");
         await changePassword(ctxAuth.userId, body.currentPassword, body.newPassword);
         return NextResponse.json({ ok: true });
       }
