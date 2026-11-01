@@ -343,9 +343,11 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
     ) {
       throw new ConflictError("Titular ou estado do pedido foi alterado.");
     }
+    if (!fresh.newHolderEmail) throw new BusinessRuleError("Pedido sem email do novo titular.");
+    const newHolderEmail = newHolderEmail;
 
     const recipient = await tx.user.findUnique({
-      where: { email: fresh.newHolderEmail.toLowerCase() },
+      where: { email: newHolderEmail },
       select: { id: true },
     });
     const attendee = fresh.ticket.orderAttendeeId
@@ -353,7 +355,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
           where: { id: fresh.ticket.orderAttendeeId },
           data: {
             fullName: fresh.newHolderFullName,
-            email: fresh.newHolderEmail.toLowerCase(),
+            email: newHolderEmail,
             phone: fresh.newHolderPhone,
             documentType: fresh.newHolderDocumentType,
             documentNumber: fresh.newHolderDocumentNumber,
@@ -365,7 +367,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
             orderId: fresh.ticket.orderId,
             ticketTypeId: fresh.ticket.ticketTypeId,
             fullName: fresh.newHolderFullName,
-            email: fresh.newHolderEmail.toLowerCase(),
+            email: newHolderEmail,
             phone: fresh.newHolderPhone,
             documentType: fresh.newHolderDocumentType,
             documentNumber: fresh.newHolderDocumentNumber,
@@ -384,7 +386,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
         status: "TRANSFERRED",
         orderAttendeeId: attendee.id,
         holderUserId: recipient?.id ?? null,
-        holderEmail: fresh.newHolderEmail.toLowerCase(),
+        holderEmail: newHolderEmail,
         holderName: fresh.newHolderFullName,
         qrSecretHash: sha256(secret),
         qrRotatedAt: new Date(),
