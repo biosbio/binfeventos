@@ -55,7 +55,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
     if (action.length === 2 && action[1] === "sessions") {
       const auth = await requirePermission("session:manage");
       const eventId = parse(UUID, action[0]);
-      const raw = await req.json<Record<string, unknown>>();
+      const raw = (await req.json()) as Record<string, unknown>;
       const body = parse((await import("@/modules/events/schemas")).sessionSchema, { ...raw, eventId });
       const { addSession } = await import("@/modules/events/service");
       const session = await addSession(auth, body);
