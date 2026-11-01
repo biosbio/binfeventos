@@ -37,6 +37,7 @@ export default function RegisterPage() {
       setSuccess("Conta criada! Pode entrar com as suas credenciais.");
       setFullName("");
       setEmail("");
+      setPhone("");
       setPassword("");
     } catch {
       setError("Erro de rede. Tente novamente.");
