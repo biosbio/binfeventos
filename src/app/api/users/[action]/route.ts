@@ -100,7 +100,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
           const { verifyAdminPanelMfa } = await import("@/modules/users/panel-auth");
           await verifyAdminPanelMfa(ctxAuth, body.password, body.totpCode);
         } else {
-          const body = parseBody(z.object({ code: z.string().regex(/^\\d{6}$/) }), await req.json());
+          const body = parseBody(z.object({ code: z.string().regex(/^\d{6}$/) }), await req.json());
           const { verifyOrganizerPanelCode } = await import("@/modules/users/panel-auth");
           await verifyOrganizerPanelCode(ctxAuth, body.code);
         }
