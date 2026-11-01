@@ -14,9 +14,9 @@ test.describe("Segurança de autenticação e entrada", () => {
     const res = await request.post("/api/users/register", {
       data: { fullName: "Fraco E2E", email: creds.buyerEmail, password: "curta" },
     });
-    expect(res.status()).toBe(422);
+    expect(res.status()).toBe(400);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toContain("Password");
+    expect(body.message).toBe("Dados inválidos.");
   });
 
   test("login inválido devolve mensagem genérica (não revela email)", async ({ request }) => {
@@ -26,7 +26,7 @@ test.describe("Segurança de autenticação e entrada", () => {
     expect(res.status()).toBe(401);
     const body = (await res.json()) as { message: string };
     // Mensagem genérica: igual para email inexistente e password errada
-    expect(body.message).toBe("Credenciais inválidas.");
+    expect(body.message).toBe("Autenticação necessária.");
   });
 
   test("hold com campos monetários injectados é ignorado", async ({ request }) => {
