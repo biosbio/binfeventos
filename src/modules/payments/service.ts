@@ -595,19 +595,19 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
           where: { id: payment.orderId, status: "PENDING_PAYMENT" },
           data: { status: "RESERVED" },
         });
-        if (order.holdId) {
-          await tx.inventoryHold.updateMany({
-            where: {
-              id: order.holdId,
-              status: { in: ["PENDING_PAYMENT", "VERIFYING"] },
-            },
-            data: {
-              status: "RESERVED",
-              expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-              releasedAt: null,
-            },
-          });
-        }
+      }
+      if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            status: { in: ["PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: {
+            status: "RESERVED",
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+            releasedAt: null,
+          },
+        });
       }
     });
     await writeAudit({
