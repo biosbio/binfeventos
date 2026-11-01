@@ -74,5 +74,9 @@ export async function rateLimit(
       "updatedAt" = NOW()
     RETURNING "count"
   `;
+  // Limpeza oportunista de buckets antigos para a tabela não crescer indefinidamente.
+  if (Math.random() < 0.01) {
+    await prisma.$executeRaw`DELETE FROM "rate_limit_buckets" WHERE "resetAt" < NOW() - INTERVAL '1 day'`;
+  }
   return (rows[0]?.count ?? max + 1) > max;
 }
