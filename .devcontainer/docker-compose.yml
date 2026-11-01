@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspaces/binfeventos:cached
+    command: sleep infinity
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/binf_eventos?schema=public
+    networks:
+      - binf-network
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: binf_eventos
+    ports:
+      - "5432:5432"
+    volumes:
+      - binf-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d binf_eventos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - binf-network
+
+volumes:
+  binf-postgres-data:
+
+networks:
+  binf-network:
