@@ -171,6 +171,26 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
       where: { paymentId: current.id, status: "ACTIVE" },
       data: { status: "BLOCKED", finishedAt: new Date() },
     });
+    const orderClaim = await tx.order.updateMany({
+      where: { id: order.id, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+      data: { status: "PENDING_PAYMENT" },
+    });
+    if (orderClaim.count !== 1) {
+      throw new ConflictError("A encomenda foi alterada antes da iniciação do pagamento.");
+    }
+    if (freshOrder.holdId) {
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: {
+          id: freshOrder.holdId,
+          organizationId: order.organizationId,
+          status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+        },
+        data: { status: "PENDING_PAYMENT" },
+      });
+      if (holdClaim.count !== 1) {
+        throw new BusinessRuleError("A reserva de inventário deixou de estar ativa.");
+      }
+    }
     return current;
   });
 
