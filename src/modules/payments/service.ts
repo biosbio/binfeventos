@@ -197,61 +197,67 @@ export async function confirmPayment(
     console.error("[webhook] payment-not-found", { providerRef });
     return;
   }
-  if (payment.status === "CONFIRMED") return; // idempotente
+  if (payment.status === "CONFIRMED") return;
 
   const didConfirm = await prisma.$transaction(async (tx) => {
-    // Não converter uma encomenda cancelada/terminal em venda por causa
-    // de um webhook atrasado. O dinheiro recebido segue para revisão manual.
-    const orderClaim = await tx.order.updateMany({
-      where: {
-        id: payment.orderId,
-        status: { in: ["RESERVED", "PENDING_PAYMENT"] },
-      },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
-    });
-    if (orderClaim.count !== 1) {
+    // Não confirmar pagamento se o hold foi libertado/expirado.
+    const hold = payment.order.holdId
+      ? await tx.inventoryHold.findUnique({
+          where: { id: payment.order.holdId },
+          select: { id: true, status: true, sessionId: true, quantity: true },
+        })
+      : null;
+    if (payment.order.holdId && (!hold || !["RESERVED", "PENDING_PAYMENT", "VERIFYING", "CONFIRMED"].includes(hold.status))) {
       await tx.payment.updateMany({
-        where: { id: payment.id, status: { not: "CONFIRMED" } },
-        data: { status: "UNDER_REVIEW" },
+        where: { id: payment.id, status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] } },
+        data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
       });
       return false;
     }
 
-    // Claim atómico: apenas um webhook concorrente pode confirmar o pagamento.
-    const claim = await tx.payment.updateMany({
-      where: { id: payment.id, status: { not: "CONFIRMED" } },
+    // Claim do pagamento primeiro. DECLINED/CANCELLED/EXPIRED nunca passam
+    // diretamente a CONFIRMED; callbacks tardios seguem para revisão manual.
+    const paymentClaim = await tx.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
       data: {
         status: "CONFIRMED",
         confirmedAt: new Date(),
         providerRawPayload: rawPayload as never,
       },
     });
-    if (claim.count !== 1) {
-      throw new ConflictError("Pagamento já processado por outra operação.");
+    if (paymentClaim.count !== 1) {
+      const fresh = await tx.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
+      if (fresh && ["DECLINED", "CANCELLED", "EXPIRED"].includes(fresh.status)) {
+        await tx.payment.updateMany({
+          where: { id: payment.id, status: fresh.status },
+          data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+        });
+      }
+      return false;
     }
 
-    // Opção B: tentativa ativa vira COMPLETED; as restantes ficam BLOCKED
-    await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment.id, status: "ACTIVE" },
-      data: { status: "COMPLETED", finishedAt: new Date() },
+    // Uma encomenda só pode ser confirmada por um pagamento.
+    const orderClaim = await tx.order.updateMany({
+      where: { id: payment.orderId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+      data: { status: "CONFIRMED", confirmedAt: new Date() },
     });
-    await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment.id, status: "BLOCKED" },
-      data: { finishedAt: new Date() },
-    });
+    if (orderClaim.count !== 1) {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: "CONFIRMED" },
+        data: { status: "UNDER_REVIEW" },
+      });
+      return false;
+    }
 
-    // Consome o hold: reservado → vendido (transacional)
-    const hold = payment.order.holdId
-      ? await tx.inventoryHold.findUnique({
-          where: { id: payment.order.holdId },
-          select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
-        })
-      : null;
     if (hold && hold.status !== "CONFIRMED") {
-      await tx.inventoryHold.update({
-        where: { id: hold.id },
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: { id: hold.id, status: hold.status },
         data: { status: "CONFIRMED", releasedAt: new Date() },
       });
+      if (holdClaim.count !== 1) throw new ConflictError("Reserva alterada durante a confirmação do pagamento.");
       for (const line of payment.order.lines) {
         const inv = await tx.ticketInventory.findUnique({
           where: {
@@ -263,26 +269,32 @@ export async function confirmPayment(
           },
           select: { id: true },
         });
-        if (inv) {
-          await tx.ticketInventory.update({
-            where: { id: inv.id },
-            data: {
-              reservedQuantity: { decrement: line.quantity },
-              soldQuantity: { increment: line.quantity },
-            },
-          });
-        }
+        if (!inv) throw new BusinessRuleError("Inventário da encomenda não encontrado.");
+        await tx.ticketInventory.update({
+          where: { id: inv.id },
+          data: {
+            reservedQuantity: { decrement: line.quantity },
+            soldQuantity: { increment: line.quantity },
+          },
+        });
       }
     }
+
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: payment.id, status: "ACTIVE" },
+      data: { status: "COMPLETED", finishedAt: new Date() },
+    });
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: payment.id, status: "BLOCKED" },
+      data: { finishedAt: new Date() },
+    });
     return true;
   });
 
-  if (!didConfirm) return; // outro webhook já concluiu esta confirmação
+  if (!didConfirm) return;
 
-  // Emissão de bilhetes (idempotente) — módulo de acesso
   const { issueTicketsForOrder } = await import("@/modules/access/service");
   await issueTicketsForOrder(payment.orderId);
-
   await writeAudit({
     organizationId: payment.organizationId,
     actorUserId: null,
