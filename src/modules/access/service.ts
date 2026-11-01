@@ -402,7 +402,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
     action: "ticket.transfer_completed",
     after: sanitizeForAudit({ requestId: result.id, ticketId: result.ticketId }),
   });
-  return { approved: true, newQrToken: secret };
+  return { approved: true, ticketId: result.ticketId, newQrToken: secret };
 }
 
 /**
