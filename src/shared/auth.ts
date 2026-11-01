@@ -150,12 +150,17 @@ export async function requirePermission(permission: PermissionCode): Promise<Aut
 
 /** Utilizador autenticado pertence à organização indicada? */
 export async function isMemberOf(ctx: AuthContext, organizationId: string): Promise<boolean> {
-  if (ctx.organizationId === organizationId) return true;
-  const m = await prisma.orgMembership.findFirst({
-    where: { userId: ctx.userId, organizationId },
-    select: { acceptedAt: true },
+  // Nunca confiar apenas no organizationId guardado na sessão: a
+  // associação pode ter sido revogada depois da criação da sessão.
+  const membership = await prisma.orgMembership.findFirst({
+    where: {
+      userId: ctx.userId,
+      organizationId,
+      acceptedAt: { not: null },
+    },
+    select: { id: true },
   });
-  return m?.acceptedAt != null;
+  return membership !== null;
 }
 
 /** Exige autenticação reforçada recente para qualquer rota sob /painel. */
