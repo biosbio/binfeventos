@@ -72,6 +72,9 @@ export async function createOrder(
   });
   if (existing) {
     if (existing.organizationId !== organizationId) throw new ConflictError("Chave de checkout já utilizada.");
+    if (existing.buyerUserId !== ctx.userId && !ctx.permissions.has("order:read")) {
+      throw new ForbiddenError("checkout-idempotency-key-not-owned");
+    }
     return { orderId: existing.id, orderNumber: existing.orderNumber, totalCents: existing.totalCents, currency: existing.currency, subtotalCents: existing.subtotalCents, serviceFeeCents: existing.serviceFeeCents, taxCents: existing.taxCents, commissionCents: existing.commissionCents, status: existing.status };
   }
 
