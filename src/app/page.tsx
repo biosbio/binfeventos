@@ -43,6 +43,9 @@ export default async function HomePage() {
               <Link className="button button-secondary" href="/register">
                 Criar conta grátis
               </Link>
+              <Link className="button button-lime" href="/organizador">
+                Organizar um evento
+              </Link>
             </div>
           </div>
           <div className="hero-art" aria-hidden="true">
