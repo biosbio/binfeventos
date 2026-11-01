@@ -63,7 +63,9 @@ async function deliverSms(to: string, code: string): Promise<void> {
 
 function codeDigest(code: string): string {
   const pepper = process.env.SESSION_SECRET;
-  if (!pepper) throw new AppError("SERVER_MISCONFIGURED", 500, "Configuração de segurança incompleta.");
+  if (!pepper || pepper.length < 32) {
+    throw new AppError("SERVER_MISCONFIGURED", 500, "SESSION_SECRET deve ter pelo menos 32 caracteres.");
+  }
   return sha256(`${pepper}:${code}`);
 }
 
