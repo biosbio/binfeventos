@@ -397,17 +397,23 @@ export async function confirmHold(holdId: string): Promise<{
 
 /** Libertar hold manualmente (cancelamento do comprador). */
 export async function releaseHold(ctx: AuthContext, holdId: string): Promise<void> {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   await prisma.$transaction(async (tx) => {
     const h = await tx.inventoryHold.findUnique({ where: { id: holdId } });
-    if (!h || h.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
-    if (h.userId !== ctx.userId && !ctx.permissions.has("order:cancel")) {
-      throw new ForbiddenError("hold-not-owned");
+    if (!h) throw new NotFoundError("Reserva");
+    const isBuyer = h.userId === ctx.userId;
+    const isOrgOperator =
+      ctx.organizationId === h.organizationId && ctx.permissions.has("order:cancel");
+    if (!isBuyer && !isOrgOperator) throw new ForbiddenError("hold-not-owned");
+    if (
+      isOrgOperator &&
+      (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+    ) {
+      throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
     }
     const claimed = await tx.inventoryHold.updateMany({
       where: {
         id: h.id,
-        organizationId: ctx.organizationId,
+        organizationId: h.organizationId,
         status: "RESERVED",
         expiresAt: { gt: new Date() },
       },
