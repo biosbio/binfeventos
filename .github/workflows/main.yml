@@ -53,6 +53,13 @@ jobs:
       # Temporário no PR: gera o lockfile atualizado após a migração de majors.
       # Depois de commitar package-lock.json, voltar para npm ci.
       - run: npm install --no-audit --no-fund
+      - name: Export regenerated lockfile for repository update
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
       - run: npm audit --audit-level=moderate
       - run: npx prisma generate
       - run: npx prisma validate
