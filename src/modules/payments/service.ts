@@ -362,6 +362,9 @@ export async function confirmPayment(
   if (payment.status === "CONFIRMED") return;
 
   const didConfirm = await prisma.$transaction(async (tx) => {
+    // Ordem de locks consistente: encomenda → pagamento → reserva.
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${payment.id}::uuid FOR UPDATE`;
     // Não confirmar pagamento se o hold foi libertado/expirado.
     const hold = payment.order.holdId
       ? await tx.inventoryHold.findUnique({
