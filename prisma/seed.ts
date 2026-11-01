@@ -69,9 +69,10 @@ async function main(): Promise<void> {
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
-    update: {},
+    update: { platformRole: "PLATFORM_ADMIN" },
     create: {
       fullName: "Administrador da Plataforma",
+      platformRole: "PLATFORM_ADMIN",
       email: adminEmail,
       passwordHash: await hashPassword(adminPassword),
       mfaEnabled: true,
@@ -81,8 +82,8 @@ async function main(): Promise<void> {
     select: { id: true },
   });
 
-  // O administrador inicial também precisa de uma organização ativa e de
-  // uma associação ORG_ADMIN para aceder ao painel e gerir eventos.
+  // Organização operacional inicial. O acesso administrativo à plataforma
+  // é concedido separadamente por platformRole e continua protegido por MFA.
   const organization = await prisma.organization.upsert({
     where: { slug: "binf-eventos" },
     update: {},
