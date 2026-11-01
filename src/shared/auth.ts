@@ -146,6 +146,7 @@ export async function requirePermission(permission: PermissionCode): Promise<Aut
   if (!ctx.permissions.has(permission)) {
     throw new ForbiddenError(permission);
   }
+  if (ctx.organizationId) await assertOrgActive(ctx.organizationId);
   return ctx;
 }
 
