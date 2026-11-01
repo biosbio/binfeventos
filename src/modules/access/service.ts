@@ -122,7 +122,7 @@ export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<st
     where: { id: ticketId },
     include: { order: { select: { buyerUserId: true } } },
   });
-  if (!ticket || ticket.organizationId !== ctx.organizationId) throw new NotFoundError("Bilhetes");
+  if (!ticket) throw new NotFoundError("Bilhetes");
   // Permissão operacional de leitura não concede poder para rotacionar
   // o QR de um comprador. Apenas o comprador pode pedir novo token.
   if (ticket.order.buyerUserId !== ctx.userId) {
