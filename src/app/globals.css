@@ -242,3 +242,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .admin-user-edit { grid-template-columns: 1fr; }
   .admin-user-edit .admin-user-actions { grid-column: auto; }
 }
+
+.account-security-link { margin: 18px 0 8px; }
+.account-security-page { padding: 48px 0 72px; max-width: 760px; }
+.account-security-page h1 { margin: 10px 0 8px; font-size: clamp(34px,4vw,48px); letter-spacing: -.05em; }
+.account-password-form { display: grid; gap: 14px; margin-top: 26px; }
+.account-password-form .form-field { margin: 0; }
