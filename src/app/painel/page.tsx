@@ -14,6 +14,8 @@ export default async function OrganizerPanelPage() {
     redirect("/login?next=%2Fpainel");
   }
 
+  if (ctx.platformRole === "PLATFORM_ADMIN") redirect("/admin");
+
   if (!ctx.permissions.has("event:read") || !ctx.organizationId) {
     redirect("/organizador");
   }
