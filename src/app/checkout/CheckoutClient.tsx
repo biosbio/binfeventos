@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { SiteHeader, SiteFooter } from "../_components/site-shell";
 
 // ============================================================
 // Checkout — cliente mínimo (SEC):
@@ -169,18 +168,15 @@ export default function CheckoutClient() {
   if (!sessionId || !eventId) {
     return (
       <>
-        <SiteHeader />
         <main className="container" style={{ padding: "60px 0" }}>
           <div className="empty-state">Sessão inválida. Volte ao evento e tente novamente.</div>
         </main>
-        <SiteFooter />
       </>
     );
   }
 
   return (
     <>
-      <SiteHeader />
       <main className="container" style={{ padding: "45px 0 70px", maxWidth: 560 }}>
         <span className="section-kicker">CHECKOUT SEGURO</span>
         <h1 style={{ margin: "9px 0 22px", fontSize: "clamp(30px,4vw,42px)", letterSpacing: "-.05em" }}>
@@ -292,7 +288,6 @@ export default function CheckoutClient() {
           </div>
         ) : null}
       </main>
-      <SiteFooter />
     </>
   );
 }
