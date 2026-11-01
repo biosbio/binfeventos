@@ -283,7 +283,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
 
   const request = await prisma.ticketTransferRequest.findUnique({
     where: { id: input.requestId },
-    include: { ticket: true },
+    include: { ticket: { include: { session: { select: { startsAt: true } } } } },
   });
   if (!request || request.organizationId !== ctx.organizationId) {
     throw new NotFoundError("Pedido de transferência");
@@ -324,14 +324,15 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
     await tx.$queryRaw`SELECT "id" FROM "tickets" WHERE "id" = ${request.ticketId}::uuid FOR UPDATE`;
     const fresh = await tx.ticketTransferRequest.findUnique({
       where: { id: request.id },
-      include: { ticket: true },
+      include: { ticket: { include: { session: { select: { startsAt: true } } } } },
     });
     if (
       !fresh ||
       fresh.organizationId !== ctx.organizationId ||
       !["ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"].includes(fresh.status) ||
       fresh.ticket.status !== "ISSUED" ||
-      fresh.ticket.holderUserId !== fresh.requesterUserId
+      fresh.ticket.holderUserId !== fresh.requesterUserId ||
+      fresh.ticket.session.startsAt.getTime() <= Date.now()
     ) {
       throw new ConflictError("Titular ou estado do pedido foi alterado.");
     }
