@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ValidationError } from "@/shared/errors";
+import { errorResponse, ValidationError, ForbiddenError, NotFoundError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
 
 // ============================================================
@@ -52,7 +52,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const auth = await requirePermission("gate:manage");
       const body = parse((await import("@/modules/access/schemas")).createGateSchema, await req.json());
       const { prisma } = await import("@/shared/lib/prisma");
-      if (!auth.organizationId) throw new Error("no-active-organization");
+      if (!auth.organizationId) throw new ForbiddenError("no-active-organization");
+
+      const venue = await prisma.venue.findFirst({
+        where: { id: body.venueId, organizationId: auth.organizationId },
+        select: { id: true },
+      });
+      if (!venue) throw new NotFoundError("Recinto");
+
+      if (body.sessionId) {
+        const session = await prisma.eventSession.findUnique({
+          where: { id: body.sessionId },
+          include: { event: { select: { organizationId: true } } },
+        });
+        if (
+          !session ||
+          session.event.organizationId !== auth.organizationId ||
+          session.venueId !== body.venueId
+        ) {
+          throw new NotFoundError("Sessão/recinto");
+        }
+      }
+
       const gate = await prisma.accessGate.create({
         data: {
           organizationId: auth.organizationId,
