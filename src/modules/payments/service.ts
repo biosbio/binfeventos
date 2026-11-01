@@ -160,9 +160,16 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
 }
 
 /** Confirmação idempotente: atualiza Payment, encomenda, hold e emite bilhetes. */
-export async function confirmPayment(providerRef: string, rawPayload: unknown): Promise<void> {
-  const payment = await prisma.payment.findUnique({
-    where: { providerRef },
+export async function confirmPayment(
+  providerRef: string,
+  rawPayload: unknown,
+  providerCode?: string
+): Promise<void> {
+  const payment = await prisma.payment.findFirst({
+    where: {
+      providerRef,
+      ...(providerCode ? { provider: { code: providerCode } } : {}),
+    },
     include: { order: { include: { lines: true } } },
   });
   if (!payment) {
@@ -270,8 +277,11 @@ export async function handleWebhook(
     throw new AppError("WEBHOOK_INVALID", 401, "Assinatura de webhook inválida.");
   }
 
-  const payment = await prisma.payment.findUnique({
-    where: { providerRef: payload.providerRef },
+  const payment = await prisma.payment.findFirst({
+    where: {
+      providerRef: payload.providerRef,
+      provider: { code: providerCode },
+    },
     select: { id: true, amountCents: true, orderId: true },
   });
   if (!payment) return { processed: false }; // ignora transações desconhecidas
@@ -294,7 +304,7 @@ export async function handleWebhook(
   }
 
   if (payload.status === "CONFIRMED") {
-    await confirmPayment(payload.providerRef, payload.rawPayload);
+    await confirmPayment(payload.providerRef, payload.rawPayload, providerCode);
   } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
     await prisma.payment.update({
       where: { id: payment.id },
