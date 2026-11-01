@@ -107,6 +107,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         return NextResponse.json({ ok: true });
       }
 
+      case "password-recovery-start": {
+        const body = parseBody((await import("@/modules/users/schemas")).passwordRecoveryStartSchema, await req.json());
+        const { startPasswordRecovery } = await import("@/modules/users/password-recovery");
+        await startPasswordRecovery(body.email, body.channel, clientIp(req));
+        return NextResponse.json({ ok: true, message: "Se a conta e o método forem elegíveis, receberá instruções para recuperar o acesso." });
+      }
+
+      case "password-recovery-confirm": {
+        const body = parseBody((await import("@/modules/users/schemas")).passwordRecoveryConfirmSchema, await req.json());
+        const { completePasswordRecovery } = await import("@/modules/users/password-recovery");
+        await completePasswordRecovery(body, clientIp(req));
+        return NextResponse.json({ ok: true, message: "Password atualizada. Entre novamente com a nova password." });
+      }
+
       case "password": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
