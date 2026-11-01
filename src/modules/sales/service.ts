@@ -96,6 +96,7 @@ export async function createOrder(
     throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   const organizationId = hold.organizationId;
+  await assertOrgActive(organizationId);
   if (hold.status !== "RESERVED") {
     throw new ConflictError(`Reserva em estado ${hold.status}.`);
   }
