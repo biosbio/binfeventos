@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     await prisma.rolePermission.deleteMany({
       where: {
         roleId: role.id,
-        permission: { code: { notIn: permCodes } },
+        permission: { is: { code: { notIn: permCodes } } },
       },
     });
 
@@ -51,19 +51,24 @@ async function main(): Promise<void> {
     create: { code: "cash", name: "Dinheiro (bilheteira física)", country: "GLOBAL", isActive: true },
   });
 
+  const isProduction = process.env.NODE_ENV === "production";
   const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET;
-  if (!sandboxSecret || sandboxSecret.length < 32) {
-    throw new Error("Defina SANDBOX_WEBHOOK_SECRET com pelo menos 32 caracteres no ambiente. Não use segredos predefinidos.");
+  if (!isProduction && (!sandboxSecret || sandboxSecret.length < 32)) {
+    throw new Error("Defina SANDBOX_WEBHOOK_SECRET com pelo menos 32 caracteres no ambiente de desenvolvimento.");
   }
+  const sandboxConfig = sandboxSecret ? { webhookSecret: sandboxSecret } : {};
   await prisma.paymentProvider.upsert({
     where: { code: "sandbox" },
-    update: {},
+    update: {
+      isActive: !isProduction,
+      adapterConfig: sandboxConfig,
+    },
     create: {
       code: "sandbox",
       name: "Sandbox (desenvolvimento)",
       country: "GLOBAL",
-      isActive: true,
-      adapterConfig: { webhookSecret: sandboxSecret },
+      isActive: !isProduction,
+      adapterConfig: sandboxConfig,
     },
   });
 
