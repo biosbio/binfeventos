@@ -24,12 +24,17 @@ import type { CreateEventInput, SessionInput, VenueInput } from "./schemas";
 
 /** Busca evento FORÇANDO o escopo da organização (SEC-02 ABAC). */
 async function scopedEvent(ctx: AuthContext, eventId: string) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: { sessions: true },
   });
-  if (!event || event.organizationId !== ctx.organizationId) {
+  // Administrador da plataforma pode aprovar publicação globalmente.
+  // Todos os restantes continuam estritamente limitados à organização da sessão.
+  if (
+    !event ||
+    (ctx.platformRole !== "PLATFORM_ADMIN" &&
+      (!ctx.organizationId || event.organizationId !== ctx.organizationId))
+  ) {
     throw new NotFoundError("Evento"); // neutro: não revela existência em outra org
   }
   return event;
@@ -122,6 +127,12 @@ export async function transitionEvent(
 ) {
   const event = await scopedEvent(ctx, eventId);
   const from = event.status;
+
+  // Defesa em profundidade: mesmo que uma rota seja alterada por engano,
+  // nenhum organizador consegue publicar diretamente um evento.
+  if (to === "PUBLISHED" && ctx.platformRole !== "PLATFORM_ADMIN") {
+    throw new ForbiddenError("admin-publication-approval-required");
+  }
 
   if (from === to) throw new ConflictError(`Evento já está ${transitionLabel(to)}.`);
   if (!canTransition(from, to)) {
