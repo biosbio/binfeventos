@@ -170,7 +170,7 @@ export async function verifyAdminPanelMfa(
   }
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
-    select: { passwordHash: true, mfaEnabled: true, mfaSecret: true },
+    select: { id: true, passwordHash: true, mfaEnabled: true, mfaSecret: true },
   });
   if (!user || !(await verifyPassword(user.passwordHash, password))) {
     throw new AppError("INVALID_CREDENTIALS", 401, "Credenciais inválidas.");
