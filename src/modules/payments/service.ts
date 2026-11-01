@@ -432,9 +432,46 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       }),
     });
   } else {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "DECLINED" },
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+      const changed = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          organizationId: ctx.organizationId,
+          status: { in: ["UNDER_REVIEW", "AWAITING_AUTHORIZATION"] },
+        },
+        data: { status: "DECLINED" },
+      });
+      if (changed.count !== 1) throw new ConflictError("Pagamento já foi processado.");
+
+      await tx.paymentAttempt.updateMany({
+        where: { paymentId: payment.id, status: "ACTIVE" },
+        data: { status: "FAILED", finishedAt: new Date() },
+      });
+
+      const order = await tx.order.findUnique({
+        where: { id: payment.orderId },
+        select: { status: true, holdId: true },
+      });
+      if (order?.status === "PENDING_PAYMENT") {
+        await tx.order.updateMany({
+          where: { id: payment.orderId, status: "PENDING_PAYMENT" },
+          data: { status: "RESERVED" },
+        });
+        if (order.holdId) {
+          await tx.inventoryHold.updateMany({
+            where: {
+              id: order.holdId,
+              status: { in: ["PENDING_PAYMENT", "VERIFYING"] },
+            },
+            data: {
+              status: "RESERVED",
+              expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+              releasedAt: null,
+            },
+          });
+        }
+      }
     });
     await writeAudit({
       organizationId: ctx.organizationId,
