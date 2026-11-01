@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { prisma } from "@/shared/lib/prisma";
 import {
   AppError,
@@ -32,11 +33,10 @@ const SERVICE_FEE_BPS = 500; // 5,00%
 /** Comissão da plataforma (%) — modelo combinado aprovado. */
 const COMMISSION_BPS = 800; // 8,00%
 
-/** Gera número de encomenda legível (server-side, sequencial por tentativa). */
-async function nextOrderNumber(): Promise<string> {
-  const count = await prisma.order.count();
+/** Gera número de encomenda legível e resistente a concorrência. */
+function nextOrderNumber(): string {
   const year = new Date().getFullYear();
-  return `BINF-${year}-${String(count + 1).padStart(8, "0")}`;
+  return `BINF-${year}-${randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
 /**
@@ -118,7 +118,7 @@ export async function createOrder(
   const attendeesForType = input.attendees.filter(
     (a) => a.ticketTypeId === hold.ticketTypeId
   );
-  if (attendeesForType.length !== hold.quantity) {
+  if (input.attendees.length !== hold.quantity || attendeesForType.length !== hold.quantity) {
     throw new BusinessRuleError(
       `São necessários ${hold.quantity} titulares identificados para este tipo de bilhete.`
     );
@@ -146,7 +146,7 @@ export async function createOrder(
     const created = await tx.order.create({
       data: {
         organizationId,
-        orderNumber: await nextOrderNumber(),
+        orderNumber: nextOrderNumber(),
         buyerUserId: ctx.userId,
         buyerName: input.buyerName,
         buyerEmail: input.buyerEmail,
