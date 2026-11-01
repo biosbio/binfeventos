@@ -3,7 +3,15 @@ import { authenticator } from "otplib";
 import { prisma } from "@/shared/lib/prisma";
 import { markPanelVerified, type AuthContext } from "@/shared/auth";
 import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
-import { verifyPassword, sha256, safeEqual, rateLimit } from "@/shared/lib/security";
+import {
+  verifyPassword,
+  sha256,
+  safeEqual,
+  rateLimit,
+  decryptMfaSecret,
+  encryptMfaSecret,
+  isEncryptedMfaSecret,
+} from "@/shared/lib/security";
 
 const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -162,9 +170,18 @@ export async function verifyAdminPanelMfa(
   if (!user || !(await verifyPassword(user.passwordHash, password))) {
     throw new AppError("INVALID_CREDENTIALS", 401, "Credenciais inválidas.");
   }
-  if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(totpCode) ||
-      !authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(totpCode)) {
     throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+  const mfaSecret = decryptMfaSecret(user.mfaSecret);
+  if (!authenticator.verify({ token: totpCode, secret: mfaSecret })) {
+    throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+  if (!isEncryptedMfaSecret(user.mfaSecret) && process.env.MFA_ENCRYPTION_KEY) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { mfaSecret: encryptMfaSecret(mfaSecret) },
+    });
   }
   await markPanelVerified(ctx.sessionId);
 }
