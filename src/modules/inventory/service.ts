@@ -240,6 +240,8 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     throw new BusinessRuleError("Evento não está publicado para venda.");
   }
 
+  const organizationId = ctx.organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   const expiresAt = new Date(Date.now() + HOLD_TTL_MS);
 
   const hold = await prisma.$transaction(async (tx) => {
@@ -286,7 +288,7 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
 
     return tx.inventoryHold.create({
       data: {
-        organizationId: ctx.organizationId,
+        organizationId,
         sessionId: input.sessionId,
         ticketTypeId: input.ticketTypeId,
         batchId: input.batchId,
