@@ -307,7 +307,10 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
           organizationId: order.organizationId,
           status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
         },
-        data: { status: result.status === "UNKNOWN" ? "VERIFYING" : "PENDING_PAYMENT" },
+        data: {
+          status: result.status === "UNKNOWN" ? "VERIFYING" : "PENDING_PAYMENT",
+          ...(terminalDecline ? { expiresAt: new Date(Date.now() + 10 * 60 * 1000) } : {}),
+        },
       });
       if (holdClaim.count !== 1) {
         if (!terminalDecline) {
