@@ -183,22 +183,17 @@ export async function confirmPayment(
   }
   if (payment.status === "CONFIRMED") return; // idempotente
 
-  await prisma.$transaction(async (tx) => {
-    // Revalida estado dentro da transação (webhook pode repetir)
-    const fresh = await tx.payment.findUnique({
-      where: { id: payment.id },
-      select: { status: true },
-    });
-    if (!fresh || fresh.status === "CONFIRMED") return;
-
-    await tx.payment.update({
-      where: { id: payment.id },
+  const didConfirm = await prisma.$transaction(async (tx) => {
+    // Claim atómico: apenas um webhook concorrente pode confirmar o pagamento.
+    const claim = await tx.payment.updateMany({
+      where: { id: payment.id, status: { not: "CONFIRMED" } },
       data: {
         status: "CONFIRMED",
         confirmedAt: new Date(),
         providerRawPayload: rawPayload as never,
       },
     });
+    if (claim.count !== 1) return false;
 
     // Opção B: tentativa ativa vira COMPLETED; as restantes ficam BLOCKED
     await tx.paymentAttempt.updateMany({
@@ -220,8 +215,7 @@ export async function confirmPayment(
       where: { id: payment.order.holdId ?? "" },
       select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
     });
-    if (hold) {
-      if (hold.status === "CONFIRMED") return; // já consumido
+    if (hold && hold.status !== "CONFIRMED") {
       await tx.inventoryHold.update({
         where: { id: hold.id },
         data: { status: "CONFIRMED", releasedAt: new Date() },
@@ -248,7 +242,10 @@ export async function confirmPayment(
         }
       }
     }
+    return true;
   });
+
+  if (!didConfirm) return; // outro webhook já concluiu esta confirmação
 
   // Emissão de bilhetes (idempotente) — módulo de acesso
   const { issueTicketsForOrder } = await import("@/modules/access/service");
@@ -287,9 +284,11 @@ export async function handleWebhook(
       providerRef: payload.providerRef,
       provider: { code: providerCode },
     },
-    select: { id: true, amountCents: true, orderId: true },
+    select: { id: true, amountCents: true, orderId: true, status: true },
   });
   if (!payment) return { processed: false }; // ignora transações desconhecidas
+  // Um webhook atrasado não pode rebaixar um pagamento já confirmado.
+  if (payment.status === "CONFIRMED") return { processed: true };
 
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
@@ -349,11 +348,26 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
   }
 
   if (input.decision === "CONFIRM") {
-    // Opção C: ninguém marca como paga sem evidência (notas obrigatórias)
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    // A confirmação manual percorre o mesmo fluxo transacional da confirmação
+    // do prestador: pagamento, encomenda, inventário e bilhetes.
+    const provider = await prisma.paymentProvider.findUnique({
+      where: { id: payment.providerId },
+      select: { code: true },
     });
+    if (!provider) throw new NotFoundError("Prestador");
+
+    const manualProviderRef = payment.providerRef ?? `manual_${payment.id}`;
+    if (!payment.providerRef) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { providerRef: manualProviderRef },
+      });
+    }
+    await confirmPayment(
+      manualProviderRef,
+      { source: "manual-review", evidenceNotes: input.evidenceNotes },
+      provider.code
+    );
     await writeAudit({
       organizationId: ctx.organizationId,
       actorUserId: ctx.userId,
@@ -364,8 +378,6 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
         evidence: input.evidenceNotes,
       }),
     });
-    const { issueTicketsForOrder } = await import("@/modules/access/service");
-    await issueTicketsForOrder(payment.orderId);
   } else {
     await prisma.payment.update({
       where: { id: payment.id },
