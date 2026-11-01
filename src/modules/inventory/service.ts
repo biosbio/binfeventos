@@ -222,11 +222,17 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
   const existing = await prisma.inventoryHold.findUnique({
     where: { idempotencyKey },
   });
-  if (existing && existing.status === "RESERVED" && existing.expiresAt > new Date()) {
+  if (
+    existing &&
+    existing.userId === ctx.userId &&
+    existing.organizationId === ctx.organizationId &&
+    existing.status === "RESERVED" &&
+    existing.expiresAt > new Date()
+  ) {
     return { holdId: existing.id, expiresAt: existing.expiresAt, idempotencyKey };
   }
   if (existing) {
-    throw new ConflictError("Chave de idempotência já utilizada numa reserva encerrada.");
+    throw new ConflictError("Chave de idempotência já utilizada ou pertencente a outra conta.");
   }
 
   // Validação de escopo antes da transação
@@ -257,13 +263,32 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
       FOR UPDATE
     `;
     if (!inv) throw new NotFoundError("Inventário do lote nesta sessão");
+
+    // Revalida idempotência dentro da transação: duas requisições com a
+    // mesma chave não podem reservar duas vezes o mesmo inventário.
+    const concurrentExisting = await tx.inventoryHold.findUnique({
+      where: { idempotencyKey },
+    });
+    if (concurrentExisting) {
+      if (
+        concurrentExisting.userId === ctx.userId &&
+        concurrentExisting.organizationId === organizationId &&
+        concurrentExisting.status === "RESERVED" &&
+        concurrentExisting.expiresAt > new Date()
+      ) {
+        return { id: concurrentExisting.id, expiresAt: concurrentExisting.expiresAt };
+      }
+      throw new ConflictError("Chave de idempotência já utilizada.");
+    }
+
     if (inv.available < input.quantity) throw new InsufficientInventoryError();
 
-    // Limite por comprador (validado no servidor)
+    // Limite por comprador: cada titular conta apenas as suas reservas.
     const userHolds = await tx.inventoryHold.aggregate({
       where: {
+        userId: ctx.userId,
         sessionId: input.sessionId,
-        status: "RESERVED",
+        status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
       },
       _sum: { quantity: true },
     });
@@ -289,6 +314,7 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     return tx.inventoryHold.create({
       data: {
         organizationId,
+        userId: ctx.userId,
         sessionId: input.sessionId,
         ticketTypeId: input.ticketTypeId,
         batchId: input.batchId,
@@ -314,11 +340,12 @@ export async function confirmHold(holdId: string): Promise<{
   const hold = await prisma.$transaction(async (tx) => {
     const h = await tx.inventoryHold.findUnique({ where: { id: holdId } });
     if (!h) throw new NotFoundError("Reserva");
-    if (h.status !== "RESERVED") {
-      throw new ConflictError(`Reserva em estado ${h.status}; não pode ser confirmada.`);
-    }
-    if (h.expiresAt <= new Date()) {
-      throw new ConflictError("Reserva expirada.");
+    const claimed = await tx.inventoryHold.updateMany({
+      where: { id: h.id, status: "RESERVED", expiresAt: { gt: new Date() } },
+      data: { status: "CONFIRMED", releasedAt: new Date() },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictError("Reserva já tratada ou expirada.");
     }
 
     await tx.ticketInventory.update({
@@ -335,11 +362,12 @@ export async function confirmHold(holdId: string): Promise<{
       },
     });
 
-    return tx.inventoryHold.update({
-      where: { id: h.id },
-      data: { status: "CONFIRMED", releasedAt: new Date() },
-      select: { sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
-    });
+    return {
+      sessionId: h.sessionId,
+      ticketTypeId: h.ticketTypeId,
+      batchId: h.batchId,
+      quantity: h.quantity,
+    };
   });
 
   return hold;
@@ -351,8 +379,16 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
   await prisma.$transaction(async (tx) => {
     const h = await tx.inventoryHold.findUnique({ where: { id: holdId } });
     if (!h || h.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
-    if (h.status !== "RESERVED") return; // idempotente: já tratada
-    if (h.expiresAt <= new Date()) return; // expiração tratará
+    const claimed = await tx.inventoryHold.updateMany({
+      where: {
+        id: h.id,
+        organizationId: ctx.organizationId,
+        status: "RESERVED",
+        expiresAt: { gt: new Date() },
+      },
+      data: { status: "CANCELLED", releasedAt: new Date() },
+    });
+    if (claimed.count !== 1) return; // idempotente: já tratada/expirada
 
     await tx.ticketInventory.update({
       where: {
@@ -363,10 +399,6 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
         },
       },
       data: { reservedQuantity: { decrement: h.quantity } },
-    });
-    await tx.inventoryHold.update({
-      where: { id: h.id },
-      data: { status: "CANCELLED", releasedAt: new Date() },
     });
   });
 }
@@ -384,14 +416,15 @@ export async function releaseExpiredHolds(): Promise<{ released: number }> {
     take: 500,
   });
 
+  let released = 0;
   for (const h of expired) {
     await prisma.$transaction(async (tx) => {
-      // Revalida estado dentro da transação (outro worker pode ter tratado)
-      const fresh = await tx.inventoryHold.findUnique({
-        where: { id: h.id },
-        select: { status: true },
+      // Claim condicional: múltiplos workers nunca libertam a mesma reserva.
+      const claimed = await tx.inventoryHold.updateMany({
+        where: { id: h.id, status: "RESERVED", expiresAt: { lte: new Date() } },
+        data: { status: "EXPIRED", releasedAt: new Date() },
       });
-      if (!fresh || fresh.status !== "RESERVED") return;
+      if (claimed.count !== 1) return;
 
       await tx.ticketInventory.update({
         where: {
@@ -403,14 +436,11 @@ export async function releaseExpiredHolds(): Promise<{ released: number }> {
         },
         data: { reservedQuantity: { decrement: h.quantity } },
       });
-      await tx.inventoryHold.update({
-        where: { id: h.id },
-        data: { status: "EXPIRED", releasedAt: new Date() },
-      });
+      released += 1;
     });
   }
 
-  return { released: expired.length };
+  return { released };
 }
 
 /** Marcar hold como em verificação (pagamento pendente indefinido). */
