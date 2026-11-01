@@ -103,6 +103,9 @@ export async function completePasswordRecovery(input: {
       orderBy: { createdAt: "desc" },
     });
     if (!record) throw new AppError("INVALID_RECOVERY_CODE", 401, "Código expirado ou inválido. Solicite outro.");
+    if (user.memberships.length > 0 && record.channel !== "EMAIL") {
+      throw new AppError("INVALID_RECOVERY_CODE", 401, "A recuperação de contas de organizador exige o código enviado por email.");
+    }
     const attempt = await prisma.passwordResetCode.updateMany({
       where: { id: record.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
       data: { attempts: { increment: 1 } },
