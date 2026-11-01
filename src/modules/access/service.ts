@@ -341,18 +341,30 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
       where: { email: fresh.newHolderEmail.toLowerCase() },
       select: { id: true },
     });
-    const attendee = await tx.orderAttendee.create({
-      data: {
-        orderId: fresh.ticket.orderId,
-        ticketTypeId: fresh.ticket.ticketTypeId,
-        fullName: fresh.newHolderFullName,
-        email: fresh.newHolderEmail.toLowerCase(),
-        phone: fresh.newHolderPhone,
-        documentType: fresh.newHolderDocumentType,
-        documentNumber: fresh.newHolderDocumentNumber,
-      },
-      select: { id: true },
-    });
+    const attendee = fresh.ticket.orderAttendeeId
+      ? await tx.orderAttendee.update({
+          where: { id: fresh.ticket.orderAttendeeId },
+          data: {
+            fullName: fresh.newHolderFullName,
+            email: fresh.newHolderEmail.toLowerCase(),
+            phone: fresh.newHolderPhone,
+            documentType: fresh.newHolderDocumentType,
+            documentNumber: fresh.newHolderDocumentNumber,
+          },
+          select: { id: true },
+        })
+      : await tx.orderAttendee.create({
+          data: {
+            orderId: fresh.ticket.orderId,
+            ticketTypeId: fresh.ticket.ticketTypeId,
+            fullName: fresh.newHolderFullName,
+            email: fresh.newHolderEmail.toLowerCase(),
+            phone: fresh.newHolderPhone,
+            documentType: fresh.newHolderDocumentType,
+            documentNumber: fresh.newHolderDocumentNumber,
+          },
+          select: { id: true },
+        });
 
     const claimed = await tx.ticket.updateMany({
       where: {
