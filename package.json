@@ -38,7 +38,9 @@
     "typescript": "^5.7.2",
     "vitest": "^4.1.12",
     "dotenv": "^16.6.1",
-    "vite": "^6.4.5"
+    "vite": "^6.4.5",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "15.5.28"
   },
   "engines": {
     "node": ">=20.0.0"
