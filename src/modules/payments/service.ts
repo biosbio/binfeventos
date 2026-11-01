@@ -44,12 +44,17 @@ const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
 
 /** Iniciar pagamento: cria/atualiza Payment + nova tentativa (Opção B). */
 export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-
   const order = await prisma.order.findUnique({ where: { id: input.orderId } });
-  if (!order || order.organizationId !== ctx.organizationId) throw new NotFoundError("Encomenda");
-  if (order.buyerUserId !== ctx.userId && !ctx.permissions.has("boxoffice:sell")) {
-    throw new ForbiddenError("not-buyer");
+  if (!order) throw new NotFoundError("Encomenda");
+  const isBuyer = order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === order.organizationId && ctx.permissions.has("boxoffice:sell");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-buyer");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   if (order.status !== "RESERVED" && order.status !== "PENDING_PAYMENT") {
     throw new ConflictError(`Encomenda em estado ${order.status}.`);
@@ -61,13 +66,23 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(provider.code);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador do prestador não instalado.");
+  if (provider.code === "multicaixa-express" && order.currency !== "AOA") {
+    throw new BusinessRuleError("Multicaixa Express só aceita encomendas em AOA.");
+  }
 
   // Idempotência da tentativa
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
   const existingAttempt = await prisma.paymentAttempt.findUnique({
     where: { idempotencyKey: attemptKey },
+    include: { payment: { select: { id: true, orderId: true, organizationId: true } } },
   });
   if (existingAttempt) {
+    if (
+      existingAttempt.payment.orderId !== order.id ||
+      existingAttempt.payment.organizationId !== order.organizationId
+    ) {
+      throw new ConflictError("Chave de idempotência de pagamento já utilizada.");
+    }
     return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
