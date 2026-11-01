@@ -7,6 +7,7 @@ import { requireAuth, requirePermission } from "@/shared/auth";
 //   POST /api/access/validate            — validar QR na portaria
 //   POST /api/access/transfer            — solicitar transferência (titular)
 //   POST /api/access/transfer/decide      — aprovar/rejeitar (transfer:approve)
+//   GET  /api/access/my-tickets           — bilhetes do titular autenticado
 //   GET  /api/access/tickets/{id}/qr     — reobter token QR (rotação)
 //   POST /api/access/gates               — criar porta (gate:manage)
 // ============================================================
@@ -99,6 +100,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
   const { action = [] } = await ctx.params;
 
   try {
+    if (action.length === 1 && action[0] === "my-tickets") {
+      const auth = await requireAuth();
+      const { listMyTickets } = await import("@/modules/access/service");
+      return NextResponse.json({ ok: true, tickets: await listMyTickets(auth) });
+    }
+
     // GET /api/access/tickets/{id}/qr
     if (action.length === 3 && action[0] === "tickets" && action[2] === "qr") {
       const auth = await requireAuth();
