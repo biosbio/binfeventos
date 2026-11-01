@@ -503,7 +503,6 @@ model OrderLine {
 
   order      Order      @relation(fields: [orderId], references: [id])
   ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
-  tickets    Ticket[]
 
   @@index([orderId])
   @@map("order_lines")
@@ -523,6 +522,7 @@ model OrderAttendee {
 
   order      Order      @relation(fields: [orderId], references: [id])
   ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+  tickets    Ticket[]
 
   @@index([orderId])
   @@map("order_attendees")
