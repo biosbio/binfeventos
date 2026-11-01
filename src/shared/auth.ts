@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/shared/lib/prisma";
 import { sha256 } from "@/shared/lib/security";
+import { assertOrgActive } from "@/shared/audit";
 import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
 import type { PermissionCode } from "@/shared/permissions";
 
