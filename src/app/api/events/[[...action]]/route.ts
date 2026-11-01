@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ValidationError, NotFoundError } from "@/shared/errors";
-import { requirePermission } from "@/shared/auth";
+import { errorResponse, ValidationError, NotFoundError, ForbiddenError } from "@/shared/errors";
+import { requireAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -131,7 +131,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ action?: st
   try {
     // GET /api/events (lista, filtro opcional ?status=PUBLISHED)
     if (action.length === 0) {
-      const auth = await requirePermission("event:read");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("event:read");
       const { listEvents } = await import("@/modules/events/service");
       const statusParam = url.searchParams.get("status");
       const status = statusParam ? parse(statusSchema, statusParam) : undefined;
@@ -142,7 +145,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ action?: st
     // GET /api/events/{id}
     if (action.length === 1) {
       const eventId = parse(UUID, action[0]);
-      const auth = await requirePermission("event:read");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("event:read");
       const { getEvent } = await import("@/modules/events/service");
       const event = await getEvent(auth, eventId);
       return NextResponse.json({ ok: true, event });
