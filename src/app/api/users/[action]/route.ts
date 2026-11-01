@@ -83,6 +83,30 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         return NextResponse.json({ ok: true });
       }
 
+      case "panel-auth-start": {
+        const { requireAuth } = await import("@/shared/auth");
+        const ctxAuth = await requireAuth();
+        const body = parseBody(z.object({ channel: z.enum(["EMAIL", "SMS"]) }), await req.json());
+        const { sendOrganizerPanelCode } = await import("@/modules/users/panel-auth");
+        await sendOrganizerPanelCode(ctxAuth, body.channel);
+        return NextResponse.json({ ok: true, message: "Código enviado." });
+      }
+
+      case "panel-auth-verify": {
+        const { requireAuth } = await import("@/shared/auth");
+        const ctxAuth = await requireAuth();
+        if (ctxAuth.platformRole === "PLATFORM_ADMIN") {
+          const body = parseBody(z.object({ password: z.string().min(1), totpCode: z.string().regex(/^\\d{6}$/) }), await req.json());
+          const { verifyAdminPanelMfa } = await import("@/modules/users/panel-auth");
+          await verifyAdminPanelMfa(ctxAuth, body.password, body.totpCode);
+        } else {
+          const body = parseBody(z.object({ code: z.string().regex(/^\\d{6}$/) }), await req.json());
+          const { verifyOrganizerPanelCode } = await import("@/modules/users/panel-auth");
+          await verifyOrganizerPanelCode(ctxAuth, body.code);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       case "password": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
