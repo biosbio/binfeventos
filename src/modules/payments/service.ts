@@ -620,6 +620,12 @@ export async function handleWebhook(
       if (order?.holdId) await markHoldVerifying(order.holdId);
       throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
     }
+    await writeAudit({
+      organizationId: payment.organizationId,
+      actorUserId: null,
+      action: "payment.webhook_amount_mismatch_after_state_change",
+      after: sanitizeForAudit({ paymentId: payment.id, providerRef: payload.providerRef }),
+    });
     return { processed: true };
   }
 
