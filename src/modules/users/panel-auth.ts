@@ -16,7 +16,7 @@ import {
 const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
-export async function deliverEmail(to: string, code: string, subject = "Código de acesso ao painel — BINF EVENTOS"): Promise<void> {
+export async function deliverEmail(to: string, code: string, subject = "Código de acesso ao painel — BINF EVENTOS", validityMinutes = 5): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
   if (!apiKey || !from) {
@@ -29,13 +29,13 @@ export async function deliverEmail(to: string, code: string, subject = "Código 
       from,
       to: [to],
       subject,
-      text: `O seu código de acesso é ${code}. É válido por 5 minutos e só pode ser utilizado uma vez.`,
+      text: `O seu código de acesso é ${code}. É válido por ${validityMinutes} minutos e só pode ser utilizado uma vez.`,
     }),
   });
   if (!response.ok) throw new AppError("EMAIL_DELIVERY_FAILED", 502, "Não foi possível enviar o código por email.");
 }
 
-export async function deliverSms(to: string, code: string, purpose = "acesso ao painel"): Promise<void> {
+export async function deliverSms(to: string, code: string, purpose = "acesso ao painel", validityMinutes = 5): Promise<void> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
@@ -48,7 +48,7 @@ export async function deliverSms(to: string, code: string, purpose = "acesso ao 
   const body = new URLSearchParams({
     To: to,
     From: from,
-    Body: `BINF EVENTOS: o seu código de ${purpose} é ${code}. Válido por 10 minutos.`,
+    Body: `BINF EVENTOS: o seu código de ${purpose} é ${code}. Válido por ${validityMinutes} minutos.`,
   });
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: "POST",
