@@ -59,7 +59,7 @@ export async function requestRefund(ctx: AuthContext, input: RequestRefundInput)
       freshOrder.organizationId !== ctx.organizationId ||
       !["CONFIRMED", "PARTIALLY_REFUNDED"].includes(freshOrder.status) ||
       !freshPayment ||
-      freshPayment.status !== "CONFIRMED"
+      !["CONFIRMED", "PARTIALLY_REFUNDED"].includes(freshPayment.status)
     ) {
       throw new BusinessRuleError("A encomenda ou o pagamento já não é elegível para reembolso.");
     }
@@ -193,6 +193,14 @@ export async function completeRefund(
       data: { status: fully ? "REFUNDED" : "PARTIALLY_REFUNDED" },
     });
     if (updatedOrder.count !== 1) throw new ConflictError("Estado da encomenda foi alterado.");
+
+    await tx.payment.updateMany({
+      where: {
+        id: refund.paymentId,
+        status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED"] },
+      },
+      data: { status: fully ? "REFUNDED" : "PARTIALLY_REFUNDED" },
+    });
 
     await tx.financialLedgerEntry.create({
       data: {
