@@ -102,6 +102,31 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   // Um pagamento por encomenda/prestador; o advisory lock evita duas linhas
   // concorrentes e a claim bloqueia uma segunda tentativa enquanto a primeira decorre.
   const payment = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
+    const freshOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { status: true, holdId: true, organizationId: true },
+    });
+    if (
+      !freshOrder ||
+      !["RESERVED", "PENDING_PAYMENT"].includes(freshOrder.status) ||
+      freshOrder.organizationId !== order.organizationId
+    ) {
+      throw new ConflictError("A encomenda foi alterada antes da iniciação do pagamento.");
+    }
+    if (freshOrder.holdId) {
+      const freshHold = await tx.inventoryHold.findUnique({
+        where: { id: freshOrder.holdId },
+        select: { status: true, organizationId: true },
+      });
+      if (
+        !freshHold ||
+        freshHold.organizationId !== order.organizationId ||
+        !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(freshHold.status)
+      ) {
+        throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
+      }
+    }
     const lockKey = `payment-init:${order.id}:${provider.id}`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
     let current = await tx.payment.findFirst({
