@@ -280,6 +280,29 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
+    const freshOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { status: true, holdId: true, organizationId: true },
+    });
+    if (
+      !freshOrder ||
+      freshOrder.organizationId !== order.organizationId ||
+      !["DRAFT", "RESERVED", "PENDING_PAYMENT"].includes(freshOrder.status)
+    ) {
+      throw new ConflictError("A encomenda mudou de estado e já não pode ser cancelada.");
+    }
+    const activePayment = await tx.payment.findFirst({
+      where: {
+        orderId: order.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
+      select: { id: true },
+    });
+    if (activePayment) {
+      throw new BusinessRuleError("Pagamento em curso ou em revisão. O cancelamento fica bloqueado até decisão financeira.");
+    }
+
     const cancelled = await tx.order.updateMany({
       where: {
         id: order.id,
@@ -292,14 +315,14 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
       throw new ConflictError("A encomenda mudou de estado e já não pode ser cancelada.");
     }
 
-    if (order.holdId) {
+    if (freshOrder.holdId) {
       const hold = await tx.inventoryHold.findUnique({
-        where: { id: order.holdId },
+        where: { id: freshOrder.holdId },
         select: { status: true, quantity: true, sessionId: true, ticketTypeId: true, batchId: true },
       });
       if (hold && ["RESERVED", "PENDING_PAYMENT"].includes(hold.status)) {
         const released = await tx.inventoryHold.updateMany({
-          where: { id: order.holdId, status: hold.status },
+          where: { id: freshOrder.holdId, status: hold.status },
           data: { status: "CANCELLED", releasedAt: new Date() },
         });
         if (released.count !== 1) throw new ConflictError("A reserva já foi alterada.");
