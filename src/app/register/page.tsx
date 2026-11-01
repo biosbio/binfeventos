@@ -90,7 +90,8 @@ export default function RegisterPage() {
               type="tel"
               required
               minLength={7}
-              maxLength={20}
+              maxLength={16}
+              pattern="[+][1-9][0-9]{7,14}"
               autoComplete="tel"
               placeholder="+245 9XXXXXXXX"
               value={phone}
