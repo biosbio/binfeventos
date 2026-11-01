@@ -45,7 +45,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       }
 
       case "login": {
-        const body = parseBody((await import("./schemas")).loginSchema, await req.json());
+        const body = parseBody((await import("@/modules/users/schemas")).loginSchema, await req.json());
         const { loginUser } = await import("@/modules/users/service");
         const result = await loginUser(body, clientIp(req));
         return NextResponse.json({ ok: true, ...result });
