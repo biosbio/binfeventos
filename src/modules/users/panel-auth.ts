@@ -160,6 +160,9 @@ export async function verifyAdminPanelMfa(
   totpCode: string,
 ): Promise<void> {
   if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("platform-admin-only");
+  if (!process.env.MFA_ENCRYPTION_KEY) {
+    throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
+  }
   if (await rateLimit(`panel-admin-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de autenticação. Aguarde cinco minutos.");
   }
