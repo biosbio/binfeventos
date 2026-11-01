@@ -87,14 +87,14 @@ export async function completePasswordRecovery(input: {
   const user = await findAccountType(input.email);
   if (!user || user.platformRole === "PLATFORM_ADMIN" && !input.totpCode) throw new UnauthorizedError();
   if (user.platformRole === "PLATFORM_ADMIN") {
-    if (!user.mfaEnabled || !user.mfaSecret || !/^\\d{6}$/.test(input.totpCode ?? "")) {
+    if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(input.totpCode ?? "")) {
       throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
     }
     if (!authenticator.verify({ token: input.totpCode!, secret: decryptMfaSecret(user.mfaSecret) })) {
       throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
     }
   } else {
-    if (!input.code || !/^\\d{6}$/.test(input.code)) {
+    if (!input.code || !/^\d{6}$/.test(input.code)) {
       throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
     }
     const record = await prisma.passwordResetCode.findFirst({
