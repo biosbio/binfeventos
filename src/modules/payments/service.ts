@@ -350,40 +350,57 @@ export async function handleWebhook(
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
     // Divergência → resultado indefinido: inventário protegido + revisão manual
-    const order = await prisma.order.findUnique({
-      where: { id: payment.orderId },
-      select: { holdId: true },
-    });
-    if (order?.holdId) {
-      await markHoldVerifying(order.holdId);
-    }
-    await prisma.payment.update({
-      where: { id: payment.id },
+    const changed = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
       data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
-    throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
+    if (changed.count === 1) {
+      const order = await prisma.order.findUnique({
+        where: { id: payment.orderId },
+        select: { holdId: true },
+      });
+      if (order?.holdId) await markHoldVerifying(order.holdId);
+      throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
+    }
+    return { processed: true };
   }
 
   if (payload.status === "CONFIRMED") {
     await confirmPayment(payload.providerRef, payload.rawPayload, providerCode);
   } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
-    await prisma.payment.update({
-      where: { id: payment.id },
+    const changed = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
       data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
     });
-  } else if (payload.status === "UNKNOWN") {
-    // Sem resultado definitivo: protege inventário e marca revisão
-    const order = await prisma.order.findUnique({
-      where: { id: payment.orderId },
-      select: { holdId: true },
-    });
-    if (order?.holdId) {
-      await markHoldVerifying(order.holdId);
+    if (changed.count === 1) {
+      await prisma.paymentAttempt.updateMany({
+        where: { paymentId: payment.id, status: "ACTIVE" },
+        data: { status: "FAILED", finishedAt: new Date() },
+      });
     }
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "UNDER_REVIEW" },
+  } else if (payload.status === "UNKNOWN") {
+    // Sem resultado definitivo: protege inventário e marca revisão sem
+    // rebaixar um pagamento que outro webhook já confirmou.
+    const changed = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
+      data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
+    if (changed.count === 1) {
+      const order = await prisma.order.findUnique({
+        where: { id: payment.orderId },
+        select: { holdId: true },
+      });
+      if (order?.holdId) await markHoldVerifying(order.holdId);
+    }
   }
 
   return { processed: true };
