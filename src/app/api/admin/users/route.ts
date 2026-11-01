@@ -47,30 +47,39 @@ export async function PATCH(req: NextRequest) {
       ...(input.status !== undefined ? { status: input.status } : {}),
     };
 
-    const updated = await prisma.user.update({
-      where: { id: input.userId },
-      data,
-      select: { id: true, fullName: true, email: true, phone: true, status: true, platformRole: true, createdAt: true },
-    });
-
-    // AuditLog exige organizationId. A organização de referência é apenas o escopo
-    // técnico do registo; não altera nem concede pertença organizacional ao utilizador.
     const auditOrganization = await prisma.organization.findFirst({
       orderBy: { createdAt: "asc" },
       select: { id: true },
     });
     if (!auditOrganization) {
-      console.error("[admin-user-audit] No organization available for required audit context.");
-    } else {
-      const statusChanged = input.status !== undefined && input.status !== existing.status;
-      await writeAudit({
-        organizationId: auditOrganization.id,
-        actorUserId: actor.userId,
-        action: statusChanged ? "admin.user.status_changed" : "admin.user.updated",
-        before: { userId: existing.id, fullName: existing.fullName, email: existing.email, phone: existing.phone, status: existing.status },
-        after: { userId: updated.id, fullName: updated.fullName, email: updated.email, phone: updated.phone, status: updated.status },
-      });
+      throw new AppError("AUDIT_CONTEXT_UNAVAILABLE", 503, "Não foi possível estabelecer o contexto de auditoria.");
     }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id: input.userId },
+        data,
+        select: { id: true, fullName: true, email: true, phone: true, status: true, platformRole: true, createdAt: true },
+      });
+
+      // Suspensão/encerramento revoga imediatamente todas as sessões existentes.
+      if (input.status && input.status !== "ACTIVE") {
+        await tx.session.updateMany({
+          where: { userId: input.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+      return user;
+    });
+
+    const statusChanged = input.status !== undefined && input.status !== existing.status;
+    await writeAudit({
+      organizationId: auditOrganization.id,
+      actorUserId: actor.userId,
+      action: statusChanged ? "admin.user.status_changed" : "admin.user.updated",
+      before: { userId: existing.id, fullName: existing.fullName, email: existing.email, phone: existing.phone, status: existing.status },
+      after: { userId: updated.id, fullName: updated.fullName, email: updated.email, phone: updated.phone, status: updated.status },
+    });
 
     return NextResponse.json({ ok: true, user: updated });
   } catch (error) {
