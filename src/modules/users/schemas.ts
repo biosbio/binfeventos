@@ -38,8 +38,8 @@ export const passwordRecoveryStartSchema = z.object({
 
 export const passwordRecoveryConfirmSchema = z.object({
   email: emailSchema,
-  code: z.string().regex(/^\\d{6}$/).optional(),
-  totpCode: z.string().regex(/^\\d{6}$/).optional(),
+  code: z.string().regex(/^\d{6}$/).optional(),
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
   newPassword: passwordSchema,
 }).refine((value) => Boolean(value.code) !== Boolean(value.totpCode), {
   message: "Indique apenas o código de recuperação apropriado.",
@@ -48,6 +48,7 @@ export const passwordRecoveryConfirmSchema = z.object({
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: passwordSchema,
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
 });
 
 export const enableMfaSchema = z.object({
