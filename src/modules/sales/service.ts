@@ -65,12 +65,15 @@ export async function createOrder(
   const existing = await prisma.order.findUnique({
     where: { checkoutIdempotencyKey: idempotencyKey },
     select: {
-      id: true, orderNumber: true, totalCents: true, currency: true,
+      id: true, organizationId: true, orderNumber: true, totalCents: true, currency: true,
       subtotalCents: true, serviceFeeCents: true, taxCents: true,
       commissionCents: true, status: true,
     },
   });
-  if (existing) return { orderId: existing.id, orderNumber: existing.orderNumber, totalCents: existing.totalCents, currency: existing.currency, subtotalCents: existing.subtotalCents, serviceFeeCents: existing.serviceFeeCents, taxCents: existing.taxCents, commissionCents: existing.commissionCents, status: existing.status };
+  if (existing) {
+    if (existing.organizationId !== organizationId) throw new ConflictError("Chave de checkout já utilizada.");
+    return { orderId: existing.id, orderNumber: existing.orderNumber, totalCents: existing.totalCents, currency: existing.currency, subtotalCents: existing.subtotalCents, serviceFeeCents: existing.serviceFeeCents, taxCents: existing.taxCents, commissionCents: existing.commissionCents, status: existing.status };
+  }
 
   // Hold válido da organização do contexto
   const hold = await prisma.inventoryHold.findUnique({ where: { id: input.holdId } });
