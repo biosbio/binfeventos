@@ -88,6 +88,8 @@ describe("createOrderSchema (checkout)", () => {
         {
           ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
           fullName: "Titular Y",
+          documentType: "PASSAPORTE",
+          documentNumber: "AB123456",
         },
       ],
       totalCents: 1, // tentativa — campo inexistente no schema
@@ -104,7 +106,12 @@ describe("createOrderSchema (checkout)", () => {
       ...base,
       buyerEmail: "COMPRA@DOR.com",
       attendees: [
-        { ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002", fullName: "Titular Y" },
+        {
+          ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
+          fullName: "Titular Y",
+          documentType: "PASSAPORTE",
+          documentNumber: "AB123456",
+        },
       ],
     });
     expect(r.buyerEmail).toBe("compra@dor.com");
