@@ -31,6 +31,15 @@ EMAIL_API_KEY=""
 SMS_API_KEY=""
 EOF
   chmod 600 .env
+  cat > .devcontainer/LOCAL-ADMIN-CREDENTIALS.txt <<EOF
+BINF EVENTOS - ACESSO LOCAL DE DESENVOLVIMENTO
+Email: moi7-@hotmail.com
+Password: $ADMIN_PASSWORD
+Segredo MFA (introduzir manualmente na app autenticadora): $ADMIN_MFA_SECRET
+
+Ficheiro local confidencial. Não partilhar nem enviar para o Git.
+EOF
+  chmod 600 .devcontainer/LOCAL-ADMIN-CREDENTIALS.txt
   printf '\nCredenciais locais de desenvolvimento criadas em .env (ficheiro ignorado pelo Git).\n'
 fi
 
