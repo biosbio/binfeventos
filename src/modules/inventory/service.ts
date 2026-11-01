@@ -251,6 +251,10 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
   const expiresAt = new Date(Date.now() + HOLD_TTL_MS);
 
   const hold = await prisma.$transaction(async (tx) => {
+    // Serializa reservas simultâneas do mesmo comprador na mesma sessão,
+    // inclusive quando tentam lotes diferentes ao mesmo tempo.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${ctx.userId}), hashtext(${input.sessionId}))`;
+
     // BLOQUEIO PESSIMISTA na linha de inventário (SEC: exclusividade de venda)
     const [inv] = await tx.$queryRaw<
       { id: string; available: number }[]
