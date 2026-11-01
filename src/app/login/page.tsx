@@ -95,6 +95,7 @@ export default function LoginPage() {
               Nunca guardamos a sua password no navegador — a sessão vive num
               cookie HttpOnly protegido.
             </span>
+            <p className="form-help"><Link href="/forgot-password">Esqueceu-se da password?</Link></p>
           </div>
 
           {needsMfa ? (
