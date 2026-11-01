@@ -327,6 +327,47 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
 }
 
 /** Confirmação idempotente: atualiza Payment, encomenda, hold e emite bilhetes. */
+async function flagOrderForPaymentReview(
+  orderId: string,
+  rawPayload: unknown,
+  blockedAttemptId?: string
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true, holdId: true },
+    });
+    const payments = await tx.payment.findMany({ where: { orderId }, select: { id: true } });
+    const paymentIds = payments.map((item) => item.id);
+    if (paymentIds.length > 0) {
+      await tx.payment.updateMany({
+        where: {
+          id: { in: paymentIds },
+          status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
+        },
+        data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+      });
+      await tx.paymentAttempt.updateMany({
+        where: { paymentId: { in: paymentIds }, status: "ACTIVE" },
+        data: { status: "BLOCKED", finishedAt: new Date() },
+      });
+    }
+    if (blockedAttemptId) {
+      await tx.paymentAttempt.updateMany({
+        where: { id: blockedAttemptId, status: { in: ["BLOCKED", "FAILED"] } },
+        data: { notes: "Callback tardio de tentativa bloqueada; encaminhado para revisão financeira." },
+      });
+    }
+    if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+      await tx.inventoryHold.updateMany({
+        where: { id: order.holdId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+        data: { status: "VERIFYING" },
+      });
+    }
+  });
+}
+
 export async function confirmPayment(
   providerRef: string,
   rawPayload: unknown,
@@ -348,20 +389,7 @@ export async function confirmPayment(
     select: { id: true, status: true },
   });
   if (matchingAttempt && ["BLOCKED", "FAILED"].includes(matchingAttempt.status)) {
-    await prisma.payment.updateMany({
-      where: {
-        id: payment.id,
-        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "DECLINED", "CANCELLED", "EXPIRED"] },
-      },
-      data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
-    });
-    const order = await prisma.order.findUnique({
-      where: { id: payment.orderId },
-      select: { status: true, holdId: true },
-    });
-    if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
-      await markHoldVerifying(order.holdId);
-    }
+    await flagOrderForPaymentReview(payment.orderId, rawPayload, matchingAttempt.id);
     await writeAudit({
       organizationId: payment.organizationId,
       actorUserId: null,
@@ -542,29 +570,11 @@ export async function handleWebhook(
         payload.status === "UNKNOWN" ||
         payload.amountCents !== staleAttempt.payment.amountCents
       ) {
-        await prisma.$transaction(async (tx) => {
-          await tx.paymentAttempt.updateMany({
-            where: { id: staleAttempt.id, status: staleAttempt.status },
-            data: { notes: `Callback tardio de tentativa bloqueada: ${payload.status}.` },
-          });
-          await tx.paymentAttempt.updateMany({
-            where: { paymentId: staleAttempt.paymentId, status: "ACTIVE" },
-            data: { status: "BLOCKED", finishedAt: new Date() },
-          });
-          await tx.payment.updateMany({
-            where: {
-              id: staleAttempt.paymentId,
-              status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
-            },
-            data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
-          });
-        });
-        if (
-          staleAttempt.payment.order.holdId &&
-          ["RESERVED", "PENDING_PAYMENT"].includes(staleAttempt.payment.order.status)
-        ) {
-          await markHoldVerifying(staleAttempt.payment.order.holdId);
-        }
+        await flagOrderForPaymentReview(
+          staleAttempt.payment.orderId,
+          payload.rawPayload,
+          staleAttempt.id
+        );
         await writeAudit({
           organizationId: staleAttempt.payment.organizationId,
           actorUserId: null,
