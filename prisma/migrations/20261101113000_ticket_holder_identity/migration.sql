@@ -13,3 +13,9 @@ UPDATE "tickets" AS t
 SET "holderEmail" = a."email", "holderName" = a."fullName"
 FROM "order_attendees" AS a
 WHERE t."orderAttendeeId" = a."id";
+
+CREATE INDEX "tickets_holderUserId_status_idx"
+ON "tickets"("holderUserId", "status");
+
+CREATE INDEX "tickets_holderEmail_status_idx"
+ON "tickets"("holderEmail", "status");
