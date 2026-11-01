@@ -36,14 +36,14 @@ export async function prepareSettlement(
   // Serializa a preparação para a mesma organização/período e impede
   // liquidações duplicadas quando dois operadores atuam em simultâneo.
   const result = await prisma.$transaction(async (tx) => {
-    const lockKey = `settlement:${ctx.organizationId}:${periodStart.toISOString()}:${periodEnd.toISOString()}`;
+    const lockKey = `settlement:${ctx.organizationId}`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
 
     const existingSettlement = await tx.settlement.findFirst({
       where: {
         organizationId: ctx.organizationId!,
-        periodStart,
-        periodEnd,
+        periodStart: { lt: periodEnd },
+        periodEnd: { gt: periodStart },
         status: { not: "CANCELLED" },
       },
       select: { id: true },
