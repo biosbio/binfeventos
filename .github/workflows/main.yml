@@ -34,11 +34,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "SANDBOX_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "ADMIN_PASSWORD=Ci$(openssl rand -hex 20)A1!" >> "$GITHUB_ENV"
-          echo "ADMIN_MFA_SECRET=$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')" >> "$GITHUB_ENV"
-          echo "MFA_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          SANDBOX_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+          ADMIN_PASSWORD="Ci$(openssl rand -hex 20)A1!"
+          ADMIN_MFA_SECRET="$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')"
+          MFA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+          SESSION_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$DATABASE_URL"
+          echo "::add-mask::$SANDBOX_WEBHOOK_SECRET"
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "::add-mask::$ADMIN_MFA_SECRET"
+          echo "::add-mask::$MFA_ENCRYPTION_KEY"
+          echo "::add-mask::$SESSION_SECRET"
+          echo "SANDBOX_WEBHOOK_SECRET=$SANDBOX_WEBHOOK_SECRET" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "ADMIN_MFA_SECRET=$ADMIN_MFA_SECRET" >> "$GITHUB_ENV"
+          echo "MFA_ENCRYPTION_KEY=$MFA_ENCRYPTION_KEY" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$SESSION_SECRET" >> "$GITHUB_ENV"
       # Temporário no PR: gera o lockfile atualizado após a migração de majors.
       # Depois de commitar package-lock.json, voltar para npm ci.
       - run: npm install --no-audit --no-fund
