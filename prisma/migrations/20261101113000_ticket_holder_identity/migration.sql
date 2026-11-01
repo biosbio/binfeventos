@@ -14,6 +14,13 @@ SET "holderEmail" = a."email", "holderName" = a."fullName"
 FROM "order_attendees" AS a
 WHERE t."orderAttendeeId" = a."id";
 
+UPDATE "tickets" AS t
+SET "holderEmail" = o."buyerEmail"
+FROM "orders" AS o
+WHERE t."orderId" = o."id"
+  AND t."holderEmail" IS NULL
+  AND o."buyerEmail" IS NOT NULL;
+
 -- Bilhetes já transferidos pertencem ao titular atual, não ao comprador original.
 -- Se o titular ainda não tiver conta, o email fica como mecanismo de associação.
 UPDATE "tickets" AS t
