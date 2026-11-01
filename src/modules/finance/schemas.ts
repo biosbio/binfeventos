@@ -18,6 +18,12 @@ export const approveRefundSchema = z.object({
   notes: z.string().trim().max(500).optional(),
 });
 
+export const completeRefundSchema = z.object({
+  refundId: z.string().uuid(),
+  providerRef: z.string().trim().min(3).max(200),
+  evidenceNotes: z.string().trim().min(10).max(2000),
+});
+
 export const prepareSettlementSchema = z.object({
   periodStart: z.coerce.date(),
   periodEnd: z.coerce.date(),
