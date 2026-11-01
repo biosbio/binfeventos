@@ -174,7 +174,8 @@ export async function disableMfa(userId: string, totpCode: string): Promise<void
 export async function changePassword(
   userId: string,
   currentPassword: string,
-  newPassword: string
+  newPassword: string,
+  totpCode?: string
 ): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -184,6 +185,17 @@ export async function changePassword(
 
   const ok = await verifyPassword(user.passwordHash, currentPassword);
   if (!ok) throw new UnauthorizedError();
+
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { platformRole: true, mfaEnabled: true, mfaSecret: true },
+  });
+  if (account?.platformRole === "PLATFORM_ADMIN") {
+    if (!account.mfaEnabled || !account.mfaSecret || !totpCode || !/^\\d{6}$/.test(totpCode) ||
+        !authenticator.verify({ token: totpCode, secret: decryptMfaSecret(account.mfaSecret) })) {
+      throw new AppError("INVALID_MFA", 401, "Confirme a alteração com o código da aplicação autenticadora.");
+    }
+  }
 
   await prisma.user.update({
     where: { id: userId },
