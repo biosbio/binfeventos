@@ -106,7 +106,7 @@ export default function LoginPage() {
                 name="totpCode"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                pattern="\\d{6}"
+                pattern="[0-9]{6}"
                 maxLength={6}
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
