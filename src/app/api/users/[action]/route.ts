@@ -68,7 +68,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       case "mfa/confirm": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
-        const body = parseBody((await import("./schemas")).enableMfaSchema, await req.json());
+        const body = parseBody((await import("@/modules/users/schemas")).enableMfaSchema, await req.json());
         const { confirmEnableMfa } = await import("@/modules/users/service");
         await confirmEnableMfa(ctxAuth.userId, body.totpCode);
         return NextResponse.json({ ok: true });
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       case "mfa/disable": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
-        const body = parseBody((await import("./schemas")).disableMfaSchema, await req.json());
+        const body = parseBody((await import("@/modules/users/schemas")).disableMfaSchema, await req.json());
         const { disableMfa } = await import("@/modules/users/service");
         await disableMfa(ctxAuth.userId, body.totpCode);
         return NextResponse.json({ ok: true });
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       case "password": {
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
-        const body = parseBody((await import("./schemas")).changePasswordSchema, await req.json());
+        const body = parseBody((await import("@/modules/users/schemas")).changePasswordSchema, await req.json());
         const { changePassword } = await import("@/modules/users/service");
         await changePassword(ctxAuth.userId, body.currentPassword, body.newPassword);
         return NextResponse.json({ ok: true });
