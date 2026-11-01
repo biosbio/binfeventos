@@ -33,14 +33,14 @@
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "dotenv": "^16.6.1",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "15.5.28",
     "prisma": "6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.12",
-    "dotenv": "^16.6.1",
     "vite": "^6.4.5",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "15.5.28"
+    "vitest": "^4.1.12"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -48,6 +48,7 @@
   "overrides": {
     "postcss": "^8.5.32",
     "tinypool": "^2.2.0",
-    "deepmerge-ts": "^8.0.2"
+    "deepmerge-ts": "^8.0.2",
+    "minimatch": "^11.0.1"
   }
 }
