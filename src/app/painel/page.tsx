@@ -60,7 +60,7 @@ export default async function OrganizerPanelPage() {
             <h1>O seu painel</h1>
             <p>Acompanhe os seus eventos, atividade e operações num só lugar.</p>
           </div>
-          <Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link>
+          <div className="dashboard-heading-actions"><Link className="button button-secondary" href="/minha-conta/seguranca">Segurança da conta</Link><Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link></div>
         </div>
 
         <div className="dashboard-stats">
