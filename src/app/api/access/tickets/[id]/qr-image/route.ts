@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ForbiddenError, NotFoundError } from "@/shared/errors";
+import { errorResponse, ForbiddenError } from "@/shared/errors";
 import { requireAuth } from "@/shared/auth";
 
 // ============================================================
