@@ -1,4 +1,7 @@
+"use client";
+
 import { useState } from "react";
+import Link from "next/link";
 
 // ============================================================
 // Portaria — leitor de QR (com validador autenticado com
