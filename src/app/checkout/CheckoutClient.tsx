@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { SiteHeader, SiteFooter } from "../../_components/site-shell";
+import { SiteHeader, SiteFooter } from "../_components/site-shell";
 
 // ============================================================
 // Checkout — cliente mínimo (SEC):
