@@ -87,7 +87,9 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/bilhetes/{id}` | Bilhete com QR SVG rotativo | Server |
 | `/checkout` | Compra em 3 passos (reserva → titulares → pagamento) | Client |
 | `/portaria` | Validação de QR online com registo de recusas | Client |
-| `/painel` | KPIs do organizador (vendas, pagamentos, alertas) | Server |
+| `/painel` | KPIs do organizador (vendas, pagamentos, alertas), protegido por validação reforçada | Server |
+| `/acesso-painel` | Reautenticação: password + TOTP para admin; OTP por email/SMS para organizador | Server/Client |
+| `/admin` | Painel central da plataforma, exclusivo do administrador | Server |
 | `/financas` | Liquidações + livro-razão (FINANCE_MANAGER) | Server |
 | `/financas/acoes` | Preparar/aprovar/pagar liquidações (dupla aprovação) | Client |
 
@@ -110,6 +112,8 @@ npm run test:e2e          # arranca o dev server automaticamente
 | POST | `/api/users/mfa/confirm` | Confirmar MFA | autenticado |
 | POST | `/api/users/mfa/disable` | Desativar MFA (exige código) | autenticado |
 | POST | `/api/users/password` | Alterar password (revoga sessões) | autenticado |
+| POST | `/api/users/panel-auth-start` | Enviar código de acesso de 6 dígitos por email/SMS | organizador autenticado |
+| POST | `/api/users/panel-auth-verify` | Validar OTP do organizador ou password + TOTP do administrador | autenticado |
 | POST | `/api/organizations/create` | Criar organização | autenticado |
 | GET | `/api/organizations/members` | Listar membros | `org:manage` |
 | POST | `/api/organizations/members/invite` | Convidar membro | `org:invite` |
