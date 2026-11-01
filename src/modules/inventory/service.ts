@@ -490,11 +490,25 @@ export async function releaseExpiredHolds(): Promise<{ released: number }> {
 
 /** Marcar hold como em verificação (pagamento pendente indefinido). */
 export async function markHoldVerifying(holdId: string): Promise<void> {
+  const current = await prisma.inventoryHold.findUnique({
+    where: { id: holdId },
+    select: { status: true },
+  });
+  if (!current) throw new NotFoundError("Reserva");
+  if (current.status === "VERIFYING") return;
+  if (!["RESERVED", "PENDING_PAYMENT"].includes(current.status)) {
+    throw new AppError("HOLD_NOT_UPDATABLE", 409, "Reserva não pode entrar em verificação.");
+  }
   const result = await prisma.inventoryHold.updateMany({
     where: { id: holdId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
     data: { status: "VERIFYING" },
   });
   if (result.count === 0) {
+    const fresh = await prisma.inventoryHold.findUnique({
+      where: { id: holdId },
+      select: { status: true },
+    });
+    if (fresh?.status === "VERIFYING") return;
     throw new AppError("HOLD_NOT_UPDATABLE", 409, "Reserva não pode entrar em verificação.");
   }
 }
