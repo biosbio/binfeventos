@@ -50,6 +50,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   const isOrgOperator =
     ctx.organizationId === order.organizationId && ctx.permissions.has("boxoffice:sell");
   if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-buyer");
+  await assertOrgActive(order.organizationId);
   if (
     isOrgOperator &&
     (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
