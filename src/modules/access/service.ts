@@ -42,60 +42,78 @@ function nextTicketNumber(): string {
 export async function issueTicketsForOrder(orderId: string): Promise<{
   tickets: { ticketId: string; ticketNumber: string; qrToken: string; holder: string }[];
 }> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      lines: true,
-      attendees: true,
-      session: { select: { id: true, eventId: true } },
-    },
-  });
-  if (!order) throw new NotFoundError("Encomenda");
-  if (order.status !== "CONFIRMED") {
-    throw new BusinessRuleError("Bilhetes só são emitidos após pagamento confirmado.");
-  }
+  const result = await prisma.$transaction(async (tx) => {
+    // Serializa a emissão por encomenda e evita emissão parcial.
+    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
+    if (locked.length === 0) throw new NotFoundError("Encomenda");
 
-  // Idempotência: se já existem bilhetes, não reemite
-  const existing = await prisma.ticket.count({ where: { orderId } });
-  if (existing > 0) return { tickets: [] };
-
-  const tickets: {
-    ticketId: string; ticketNumber: string; qrToken: string; holder: string;
-  }[] = [];
-
-  // Um bilhete por titular identificado (quantidade == attendees do tipo)
-  for (const attendee of order.attendees) {
-    const secret = randomBytes(32).toString("base64url");
-    const ticket = await prisma.ticket.create({
-      data: {
-        organizationId: order.organizationId,
-        orderId: order.id,
-        sessionId: order.sessionId!,
-        ticketTypeId: attendee.ticketTypeId,
-        orderAttendeeId: attendee.id,
-        ticketNumber: nextTicketNumber(),
-        status: "ISSUED",
-        qrSecretHash: sha256(secret),
-        reentryAllowed: false, // por regras do evento (config futura)
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lines: true,
+        attendees: true,
+        session: { select: { id: true, eventId: true } },
       },
-      select: { id: true, ticketNumber: true },
     });
-    tickets.push({
-      ticketId: ticket.id,
-      ticketNumber: ticket.ticketNumber,
-      qrToken: secret, // devolvido UMA vez ao titular
-      holder: attendee.fullName,
+    if (!order) throw new NotFoundError("Encomenda");
+    if (order.status !== "CONFIRMED") {
+      throw new BusinessRuleError("Bilhetes só são emitidos após pagamento confirmado.");
+    }
+    if (!order.sessionId || !order.session) {
+      throw new BusinessRuleError("Encomenda sem sessão válida; emissão bloqueada.");
+    }
+
+    const alreadyIssued = await tx.ticket.findMany({
+      where: { orderId },
+      select: { orderAttendeeId: true },
+    });
+    const issuedAttendeeIds = new Set(
+      alreadyIssued.flatMap((ticket) => ticket.orderAttendeeId ? [ticket.orderAttendeeId] : [])
+    );
+
+    const tickets: {
+      ticketId: string; ticketNumber: string; qrToken: string; holder: string;
+    }[] = [];
+
+    // Recupera emissões parciais antigas sem duplicar titulares.
+    for (const attendee of order.attendees) {
+      if (issuedAttendeeIds.has(attendee.id)) continue;
+      const secret = randomBytes(32).toString("base64url");
+      const ticket = await tx.ticket.create({
+        data: {
+          organizationId: order.organizationId,
+          orderId: order.id,
+          sessionId: order.sessionId,
+          ticketTypeId: attendee.ticketTypeId,
+          orderAttendeeId: attendee.id,
+          ticketNumber: nextTicketNumber(),
+          status: "ISSUED",
+          qrSecretHash: sha256(secret),
+          reentryAllowed: false,
+        },
+        select: { id: true, ticketNumber: true },
+      });
+      tickets.push({
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        qrToken: secret,
+        holder: attendee.fullName,
+      });
+    }
+
+    return { organizationId: order.organizationId, tickets };
+  });
+
+  if (result.tickets.length > 0) {
+    await writeAudit({
+      organizationId: result.organizationId,
+      actorUserId: null,
+      action: "ticket.issued",
+      after: sanitizeForAudit({ orderId, count: result.tickets.length }),
     });
   }
 
-  await writeAudit({
-    organizationId: order.organizationId,
-    actorUserId: null,
-    action: "ticket.issued",
-    after: sanitizeForAudit({ orderId, count: tickets.length }),
-  });
-
-  return { tickets };
+  return { tickets: result.tickets };
 }
 
 /** Reemite o token QR de um bilhete (apenas titular autenticado). */
