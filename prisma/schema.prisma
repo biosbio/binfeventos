@@ -248,6 +248,7 @@ model EventSession {
   holds      InventoryHold[]
   orders     Order[]
   tickets    Ticket[]
+  seatMaps   SeatMap[]
 
   @@index([eventId, startsAt])
   @@map("event_sessions")
@@ -480,6 +481,7 @@ model Order {
   payments     Payment[]
   refunds      Refund[]
   shiftId      String?     @db.Uuid
+  cashShift    CashShift?  @relation(fields: [shiftId], references: [id])
   tickets      Ticket[]
   fraudAlerts  FraudAlert[]
   notifications Notification[]
@@ -585,6 +587,8 @@ model Payment {
   order        Order           @relation(fields: [orderId], references: [id])
   provider     PaymentProvider @relation(fields: [providerId], references: [id])
   attempts     PaymentAttempt[]
+  refunds      Refund[]
+  chargebacks  Chargeback[]
 
   @@index([orderId, status])
   @@index([providerRef])
@@ -828,6 +832,8 @@ model CashShift {
   station      BoxOfficeStation @relation(fields: [stationId], references: [id])
   operator     User             @relation(fields: [operatorUserId], references: [id])
   orders       Order[]
+  movements    CashMovement[]
+  deposits     CashDeposit[]
 
   @@index([organizationId, status])
   @@map("cash_shifts")
@@ -917,6 +923,7 @@ model Ticket {
   session      EventSession  @relation(fields: [sessionId], references: [id])
   ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id])
   accessEvents AccessEvent[]
+  transferRequests TicketTransferRequest[]
 
   @@index([orderId])
   @@index([sessionId, status])
