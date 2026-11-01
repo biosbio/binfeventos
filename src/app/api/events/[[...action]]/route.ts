@@ -16,7 +16,7 @@ import { z } from "zod";
 
 const UUID = z.string().uuid();
 const statusSchema = z.enum([
-  "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
+  "DRAFT", "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
 ]);
 const transitionSchema = z.object({ to: statusSchema });
 
