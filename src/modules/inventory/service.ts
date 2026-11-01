@@ -383,6 +383,9 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
   await prisma.$transaction(async (tx) => {
     const h = await tx.inventoryHold.findUnique({ where: { id: holdId } });
     if (!h || h.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
+    if (h.userId !== ctx.userId && !ctx.permissions.has("order:cancel")) {
+      throw new ForbiddenError("hold-not-owned");
+    }
     const claimed = await tx.inventoryHold.updateMany({
       where: {
         id: h.id,
