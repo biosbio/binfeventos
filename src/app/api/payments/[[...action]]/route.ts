@@ -21,8 +21,8 @@ function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T 
   return r.data;
 }
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string[] }> }) {
-  const { action } = await ctx.params;
+export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action = [] } = await ctx.params;
   const path = action.join("/");
 
   try {
@@ -60,8 +60,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   }
 }
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ action: string[] }> }) {
-  const { action } = await ctx.params;
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action = [] } = await ctx.params;
   const path = action.join("/");
 
   try {
