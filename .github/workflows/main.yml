@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "SANDBOX_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%+=' | head -c 40)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=Ci$(openssl rand -hex 20)A1!" >> "$GITHUB_ENV"
           echo "ADMIN_MFA_SECRET=$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')" >> "$GITHUB_ENV"
           echo "MFA_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
