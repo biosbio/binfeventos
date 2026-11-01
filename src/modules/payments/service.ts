@@ -333,6 +333,33 @@ export async function confirmPayment(
     return;
   }
   if (payment.status === "CONFIRMED") return;
+  const matchingAttempt = await prisma.paymentAttempt.findFirst({
+    where: { paymentId: payment.id, providerRef },
+    select: { id: true, status: true },
+  });
+  if (matchingAttempt && ["BLOCKED", "FAILED"].includes(matchingAttempt.status)) {
+    await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "DECLINED", "CANCELLED", "EXPIRED"] },
+      },
+      data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+    });
+    const order = await prisma.order.findUnique({
+      where: { id: payment.orderId },
+      select: { status: true, holdId: true },
+    });
+    if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+      await markHoldVerifying(order.holdId);
+    }
+    await writeAudit({
+      organizationId: payment.organizationId,
+      actorUserId: null,
+      action: "payment.blocked_attempt_confirmation",
+      after: sanitizeForAudit({ paymentId: payment.id, attemptId: matchingAttempt.id, providerRef }),
+    });
+    return;
+  }
 
   const didConfirm = await prisma.$transaction(async (tx) => {
     // Não confirmar pagamento se o hold foi libertado/expirado.
