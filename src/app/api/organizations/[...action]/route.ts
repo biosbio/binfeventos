@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
+import { z } from "zod";
 
 // ============================================================
 // Módulo organizations — rotas API
