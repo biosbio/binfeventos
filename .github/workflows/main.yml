@@ -39,7 +39,9 @@ jobs:
           echo "ADMIN_MFA_SECRET=$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')" >> "$GITHUB_ENV"
           echo "MFA_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-      - run: npm ci
+      # Temporário no PR: gera o lockfile atualizado após a migração de majors.
+      # Depois de commitar package-lock.json, voltar para npm ci.
+      - run: npm install --no-audit --no-fund
       - run: npm audit --audit-level=moderate
       - run: npx prisma generate
       - run: npx prisma validate
