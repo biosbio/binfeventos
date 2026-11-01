@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { SiteHeader, SiteFooter } from "../_components/site-shell";
-import { listPublicEvents } from "../_lib/public-queries";
+import { SiteHeader, SiteFooter } from "./_components/site-shell";
+import { listPublicEvents } from "./_lib/public-queries";
 
 export const dynamic = "force-dynamic";
 
