@@ -98,7 +98,12 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     });
     for (const membership of memberships) {
       for (const rolePermission of membership.role.rolePermissions) {
-        permissions.add(rolePermission.permission.code);
+        const code = rolePermission.permission.code;
+        // Platform-wide permissions derive only from User.platformRole,
+        // never from an organization membership or a custom organization role.
+        if (code !== "admin:platform" && code !== "subscription:manage") {
+          permissions.add(code);
+        }
       }
     }
   }
