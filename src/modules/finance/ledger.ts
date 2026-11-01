@@ -30,109 +30,114 @@ export async function prepareSettlement(
 ) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("settlement:prepare")) throw new ForbiddenError("settlement:prepare");
-
   const { periodStart, periodEnd } = input;
-  const existingSettlement = await prisma.settlement.findFirst({
-    where: {
-      organizationId: ctx.organizationId,
-      periodStart,
-      periodEnd,
-      status: { not: "CANCELLED" },
-    },
-    select: { id: true },
-  });
-  if (existingSettlement) {
-    throw new ConflictError("Já existe uma liquidação para este período.");
-  }
+  if (periodStart >= periodEnd) throw new BusinessRuleError("Período de liquidação inválido.");
 
-  // Agregações do período (fonte: base de dados, nunca cliente)
-  const [orders, refunds, chargebacks, commission, providerFees] = await Promise.all([
-    prisma.order.aggregate({
-      where: {
-        organizationId: ctx.organizationId,
-        confirmedAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
-      },
-      _sum: { totalCents: true },
-    }),
-    prisma.refund.aggregate({
-      where: {
-        organizationId: ctx.organizationId,
-        createdAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["APPROVED", "COMPLETED", "PROCESSING"] },
-      },
-      _sum: { amountCents: true },
-    }),
-    prisma.chargeback.aggregate({
-      where: {
-        organizationId: ctx.organizationId,
-        createdAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["NOTIFIED", "EVIDENCE_GATHERING", "SUBMITTED", "LOST"] },
-      },
-      _sum: { amountCents: true },
-    }),
-    prisma.order.aggregate({
-      where: {
-        organizationId: ctx.organizationId,
-        confirmedAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
-      },
-      _sum: { commissionCents: true },
-    }),
-    // Taxas do prestador: no MVP derivadas de 1,5% do bruto (config futura)
-    prisma.payment.aggregate({
-      where: {
-        organizationId: ctx.organizationId,
-        confirmedAt: { gte: periodStart, lte: periodEnd },
-      },
-      _sum: { amountCents: true },
-    }),
-  ]);
+  // Serializa a preparação para a mesma organização/período e impede
+  // liquidações duplicadas quando dois operadores atuam em simultâneo.
+  const result = await prisma.$transaction(async (tx) => {
+    const lockKey = `settlement:${ctx.organizationId}:${periodStart.toISOString()}:${periodEnd.toISOString()}`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
 
-  const grossCents = orders._sum.totalCents ?? 0;
-  const refundedCents = refunds._sum.amountCents ?? 0;
-  const chargebackCents = chargebacks._sum.amountCents ?? 0;
-  const commissionCents = commission._sum.commissionCents ?? 0;
-  const providerFeeCents = Math.round((grossCents * 150) / 10_000); // 1,5%
+    const existingSettlement = await tx.settlement.findFirst({
+      where: {
+        organizationId: ctx.organizationId!,
+        periodStart,
+        periodEnd,
+        status: { not: "CANCELLED" },
+      },
+      select: { id: true },
+    });
+    if (existingSettlement) throw new ConflictError("Já existe uma liquidação para este período.");
 
-  const netCents =
-    grossCents - commissionCents - providerFeeCents - refundedCents - chargebackCents;
+    const [orders, refunds, chargebacks, commission, payments, activeReserves] = await Promise.all([
+      tx.order.aggregate({
+        where: {
+          organizationId: ctx.organizationId!,
+          confirmedAt: { gte: periodStart, lte: periodEnd },
+          status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+        },
+        _sum: { totalCents: true },
+      }),
+      tx.refund.aggregate({
+        where: {
+          organizationId: ctx.organizationId!,
+          createdAt: { gte: periodStart, lte: periodEnd },
+          status: { in: ["APPROVED", "COMPLETED", "PROCESSING"] },
+        },
+        _sum: { amountCents: true },
+      }),
+      tx.chargeback.aggregate({
+        where: {
+          organizationId: ctx.organizationId!,
+          createdAt: { gte: periodStart, lte: periodEnd },
+          status: { in: ["NOTIFIED", "EVIDENCE_GATHERING", "SUBMITTED", "LOST"] },
+        },
+        _sum: { amountCents: true },
+      }),
+      tx.order.aggregate({
+        where: {
+          organizationId: ctx.organizationId!,
+          confirmedAt: { gte: periodStart, lte: periodEnd },
+          status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+        },
+        _sum: { commissionCents: true },
+      }),
+      tx.payment.aggregate({
+        where: {
+          organizationId: ctx.organizationId!,
+          confirmedAt: { gte: periodStart, lte: periodEnd },
+        },
+        _sum: { amountCents: true },
+      }),
+      tx.financialReserve.aggregate({
+        where: { organizationId: ctx.organizationId!, status: { in: ["ACTIVE", "PARTIALLY_RELEASED"] } },
+        _sum: { amountCents: true },
+      }),
+    ]);
 
-  // Reservas ativas reduzem o a liquidar
-  const activeReserves = await prisma.financialReserve.aggregate({
-    where: { organizationId: ctx.organizationId, status: { in: ["ACTIVE", "PARTIALLY_RELEASED"] } },
-    _sum: { amountCents: true },
-  });
-  const reservedCents = activeReserves._sum.amountCents ?? 0;
-  const payableCents = Math.max(0, netCents - reservedCents);
+    const grossCents = orders._sum.totalCents ?? 0;
+    const refundedCents = refunds._sum.amountCents ?? 0;
+    const chargebackCents = chargebacks._sum.amountCents ?? 0;
+    const commissionCents = commission._sum.commissionCents ?? 0;
+    // Taxa provisória de 1,5% até o prestador fornecer a taxa efetiva.
+    const providerFeeCents = Math.round((grossCents * 150) / 10_000);
+    const netCents = grossCents - commissionCents - providerFeeCents - refundedCents - chargebackCents;
+    const reservedCents = activeReserves._sum.amountCents ?? 0;
+    const payableCents = Math.max(0, netCents - reservedCents);
 
-  const settlement = await prisma.settlement.create({
-    data: {
-      organizationId: ctx.organizationId,
-      periodStart,
-      periodEnd,
-      grossCents,
-      commissionCents,
-      providerFeeCents,
-      refundedCents,
-      chargebackCents,
-      netCents,
-      reservedCents,
-      payableCents,
-      status: "PENDING",
-      preparedByUserId: ctx.userId,
-    },
-    select: { id: true },
+    const settlement = await tx.settlement.create({
+      data: {
+        organizationId: ctx.organizationId!,
+        periodStart,
+        periodEnd,
+        grossCents,
+        commissionCents,
+        providerFeeCents,
+        refundedCents,
+        chargebackCents,
+        netCents,
+        reservedCents,
+        payableCents,
+        status: "PENDING",
+        preparedByUserId: ctx.userId,
+      },
+      select: { id: true },
+    });
+    return { settlement, payableCents, paymentVolumeCents: payments._sum.amountCents ?? 0 };
   });
 
   await writeAudit({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "settlement.prepared",
-    after: sanitizeForAudit({ settlementId: settlement.id, payableCents }),
+    after: sanitizeForAudit({
+      settlementId: result.settlement.id,
+      payableCents: result.payableCents,
+      paymentVolumeCents: result.paymentVolumeCents,
+    }),
   });
-
-  return settlement;
+  return result.settlement;
 }
 
 /** Aprovar/rejeitar liquidação (dupla aprovação: preparer ≠ approver). */
