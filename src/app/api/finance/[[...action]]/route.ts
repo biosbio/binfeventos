@@ -45,6 +45,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, ...result });
     }
 
+    if (path === "refunds/complete") {
+      const auth = await requirePermission("refund:approve");
+      const body = parse((await import("@/modules/finance/schemas")).completeRefundSchema, await req.json());
+      const { completeRefund } = await import("@/modules/finance/refunds");
+      const result = await completeRefund(auth, body);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
     if (path === "settlements/prepare") {
       const auth = await requirePermission("settlement:prepare");
       const body = parse((await import("@/modules/finance/schemas")).prepareSettlementSchema, await req.json());
