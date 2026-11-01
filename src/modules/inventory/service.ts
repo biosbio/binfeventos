@@ -538,7 +538,7 @@ export async function markHoldVerifying(holdId: string): Promise<void> {
     select: { status: true },
   });
   if (!current) throw new NotFoundError("Reserva");
-  if (current.status === "VERIFYING") return;
+  if (["VERIFYING", "CONFIRMED", "CANCELLED", "EXPIRED"].includes(current.status)) return;
   if (!["RESERVED", "PENDING_PAYMENT"].includes(current.status)) {
     throw new AppError("HOLD_NOT_UPDATABLE", 409, "Reserva não pode entrar em verificação.");
   }
