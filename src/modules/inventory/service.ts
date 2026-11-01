@@ -180,9 +180,15 @@ export async function transitionBatch(
 export async function getAvailability(sessionId: string) {
   const session = await prisma.eventSession.findUnique({
     where: { id: sessionId },
-    include: { event: { select: { status: true } } },
+    include: {
+      event: { select: { status: true, organization: { select: { status: true } } } },
+    },
   });
-  if (!session || session.event.status !== "PUBLISHED") {
+  if (
+    !session ||
+    session.event.status !== "PUBLISHED" ||
+    session.event.organization.status !== "ACTIVE"
+  ) {
     throw new NotFoundError("Sessão");
   }
 
