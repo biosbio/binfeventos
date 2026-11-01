@@ -44,7 +44,7 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
 /** Autentica e cria a sessão (com MFA quando ativado). */
 export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
-  if (rateLimit(`login:${ip ?? "unknown"}:${input.email}`, 10, 60_000)) {
+  if (await rateLimit(`login:${ip ?? "unknown"}:${input.email}`, 10, 60_000)) {
     throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde um minuto.");
   }
 
