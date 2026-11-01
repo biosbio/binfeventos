@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError, NotFoundError } from "@/shared/errors";
-import { requireAuth, requirePermission } from "@/shared/auth";
+import { requireAuth } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "holds") {
-      const auth = await requirePermission("order:create");
+      const auth = await requireAuth();
       const body = parse((await import("@/modules/inventory/schemas")).holdRequestSchema, await req.json());
       const { createHold } = await import("@/modules/inventory/service");
       const hold = await createHold(auth, body);
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "orders") {
-      const auth = await requirePermission("order:create");
+      const auth = await requireAuth();
       const body = parse((await import("@/modules/sales/schemas")).createOrderSchema, await req.json());
       const { createOrder } = await import("@/modules/sales/service");
       const order = await createOrder(auth, body);
