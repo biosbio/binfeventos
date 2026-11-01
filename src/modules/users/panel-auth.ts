@@ -75,6 +75,15 @@ export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" 
   });
   if (!user) throw new UnauthorizedError();
 
+  const recentCode = await prisma.panelVerificationCode.findFirst({
+    where: { userId: ctx.userId },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  if (recentCode && Date.now() - recentCode.createdAt.getTime() < 60_000) {
+    throw new AppError("RESEND_TOO_SOON", 429, "Aguarde 60 segundos antes de solicitar outro código.");
+  }
+
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await prisma.panelVerificationCode.updateMany({
     where: { userId: ctx.userId, consumedAt: null },
@@ -105,6 +114,7 @@ export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" 
 /** Valida OTP e eleva apenas a sessão atual durante 10 minutos. */
 export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): Promise<void> {
   if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
+  if (!ctx.organizationId || !ctx.permissions.has("event:read")) throw new ForbiddenError("organizer-membership-required");
   const record = await prisma.panelVerificationCode.findFirst({
     where: { userId: ctx.userId, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
     orderBy: { createdAt: "desc" },
