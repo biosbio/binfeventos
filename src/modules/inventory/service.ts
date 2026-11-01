@@ -222,10 +222,28 @@ export async function getAvailability(sessionId: string) {
  * Bloqueio pessimista: evita venda duplicada sob concorrência.
  */
 export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-
+  // Compradores não precisam pertencer à organização do evento.
+  // A organização é derivada do tipo de bilhete publicado.
   // Idempotência: chave do cliente ou gerada pelo servidor
   const idempotencyKey = input.idempotencyKey ?? generateIdempotencyKey();
+
+  const tt = await prisma.ticketType.findUnique({
+    where: { id: input.ticketTypeId },
+    include: { event: { select: { status: true } } },
+  });
+  if (!tt || tt.event.status !== "PUBLISHED") {
+    throw new NotFoundError("Tipo de bilhete disponível");
+  }
+  const organizationId = tt.organizationId;
+
+  // Operadores internos continuam sujeitos à autenticação reforçada.
+  if (
+    ctx.organizationId === organizationId &&
+    ctx.permissions.has("boxoffice:sell") &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
 
   const existing = await prisma.inventoryHold.findUnique({
     where: { idempotencyKey },
@@ -243,19 +261,11 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     throw new ConflictError("Chave de idempotência já utilizada ou pertencente a outra conta.");
   }
 
-  // Validação de escopo antes da transação
-  const tt = await scopedTicketType(ctx, input.ticketTypeId);
+  // Validação da sessão antes da transação
   const session = await prisma.eventSession.findUnique({ where: { id: input.sessionId } });
   if (!session || session.eventId !== tt.eventId) {
     throw new BusinessRuleError("Sessão não pertence ao evento deste tipo de bilhete.");
   }
-  const event = await prisma.event.findUnique({ where: { id: tt.eventId } });
-  if (!event || event.status !== "PUBLISHED") {
-    throw new BusinessRuleError("Evento não está publicado para venda.");
-  }
-
-  const organizationId = ctx.organizationId;
-  if (!organizationId) throw new ForbiddenError("no-active-organization");
   const expiresAt = new Date(Date.now() + HOLD_TTL_MS);
 
   const hold = await prisma.$transaction(async (tx) => {
