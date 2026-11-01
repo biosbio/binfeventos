@@ -16,7 +16,7 @@ import {
 const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
-async function deliverEmail(to: string, code: string): Promise<void> {
+export async function deliverEmail(to: string, code: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
   if (!apiKey || !from) {
@@ -35,7 +35,7 @@ async function deliverEmail(to: string, code: string): Promise<void> {
   if (!response.ok) throw new AppError("EMAIL_DELIVERY_FAILED", 502, "Não foi possível enviar o código por email.");
 }
 
-async function deliverSms(to: string, code: string): Promise<void> {
+export async function deliverSms(to: string, code: string): Promise<void> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
