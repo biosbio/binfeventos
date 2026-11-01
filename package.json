@@ -45,6 +45,7 @@
   },
   "overrides": {
     "postcss": "^8.5.32",
-    "tinypool": "^2.2.0"
+    "tinypool": "^2.2.0",
+    "deepmerge-ts": "^8.0.2"
   }
 }
