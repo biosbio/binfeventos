@@ -207,6 +207,12 @@ export async function markSettlementPaid(ctx: AuthContext, settlementId: string)
   if (!settlement || settlement.organizationId !== ctx.organizationId) {
     throw new NotFoundError("Liquidação");
   }
+  if (
+    settlement.preparedByUserId === ctx.userId ||
+    settlement.approvedByUserId === ctx.userId
+  ) {
+    throw new BusinessRuleError("Segregação de funções: quem prepara ou aprova não pode marcar o pagamento como executado.");
+  }
   const changed = await prisma.settlement.updateMany({
     where: { id: settlement.id, organizationId: ctx.organizationId, status: "APPROVED" },
     data: { status: "PAID", paidAt: new Date() },
