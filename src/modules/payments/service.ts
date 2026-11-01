@@ -155,6 +155,11 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     if (claimed.count !== 1) {
       throw new ConflictError("Já existe uma tentativa de pagamento em curso ou em revisão.");
     }
+    // Bloqueia tentativas anteriores antes de chamar novamente o prestador.
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: current.id, status: "ACTIVE" },
+      data: { status: "BLOCKED", finishedAt: new Date() },
+    });
     return current;
   });
 
