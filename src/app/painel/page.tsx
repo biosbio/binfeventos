@@ -88,10 +88,13 @@ export default async function OrganizerPanelPage() {
           </div>
         </div>
 
-        <h2 style={{ margin: "34px 0 14px", fontSize: 24, letterSpacing: "-.04em" }}>Os seus eventos</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", justifyContent: "space-between", marginTop: 34 }}>
+          <h2 style={{ margin: 0, fontSize: 24, letterSpacing: "-.04em" }}>Os seus eventos</h2>
+          <Link className="button button-primary" href="/painel/eventos/novo">+ Criar evento</Link>
+        </div>
         {events.length === 0 ? (
           <div className="empty-state">
-            Sem eventos. Crie o primeiro evento via API (`POST /api/events/create`).
+            Ainda não existem eventos nesta organização. Utilize “Criar evento” para registar o primeiro.
           </div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
