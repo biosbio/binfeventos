@@ -11,15 +11,10 @@ import { requireAuth } from "@/shared/auth";
 
 export async function GET(
   _req: NextRequest,
-  ctx: { params: Promise<{ action: string[] }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { action } = await ctx.params;
-    // Rota: /api/access/tickets/{id}/qr-image
-    if (action.length !== 3 || action[0] !== "tickets" || action[2] !== "qr-image") {
-      throw new NotFoundError("Rota");
-    }
-    const ticketId = action[1]!;
+    const { id: ticketId } = await ctx.params;
 
     const auth = await requireAuth();
     const { getQrToken } = await import("@/modules/access/service");
