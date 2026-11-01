@@ -323,7 +323,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
     // duas leituras concorrentes criarem duas saídas válidas.
     const exited = await prisma.$transaction(async (tx) => {
       const claim = await tx.ticket.updateMany({
-        where: { id: ticket.id, status: "USED" },
+        where: { id: ticket.id, status: "USED", lastExitAt: null },
         data: { lastExitAt: now },
       });
       if (claim.count !== 1) return false;
