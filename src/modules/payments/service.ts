@@ -160,7 +160,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: order.organizationId,
     actorUserId: ctx.userId,
     action: "payment.initiated",
     after: sanitizeForAudit({
