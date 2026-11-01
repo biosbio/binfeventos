@@ -7,7 +7,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import type { CreateOrderInput } from "./schemas";
