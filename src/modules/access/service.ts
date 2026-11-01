@@ -258,10 +258,11 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
  */
 export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
   if (!ctx.permissions.has("access:validate")) throw new ForbiddenError("access:validate");
 
   const gate = await prisma.accessGate.findUnique({
-    where: { organizationId_code: { organizationId: ctx.organizationId, code: input.gateCode } },
+    where: { organizationId_code: { organizationId, code: input.gateCode } },
   });
   if (!gate || !gate.isActive) throw new NotFoundError("Porta");
 
@@ -280,7 +281,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   const deny = async (reason: string) => {
     await prisma.accessEvent.create({
       data: {
-        organizationId: ctx.organizationId,
+        organizationId,
         ticketId: ticket?.id ?? null,
         gateId: gate.id,
         eventType: gate.gateType === "EXIT" ? "EXIT_RECORDED" : "ENTRY_DENIED",
@@ -315,7 +316,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
     await prisma.$transaction(async (tx) => {
       await tx.accessEvent.create({
         data: {
-          organizationId: ctx.organizationId,
+          organizationId,
           ticketId: ticket.id,
           gateId: gate.id,
           eventType: "EXIT_RECORDED",
@@ -339,7 +340,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
       await prisma.$transaction(async (tx) => {
         await tx.accessEvent.create({
           data: {
-            organizationId: ctx.organizationId,
+            organizationId,
             ticketId: ticket.id,
             gateId: gate.id,
             eventType: "REENTRY_GRANTED",
@@ -367,7 +368,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   await prisma.$transaction(async (tx) => {
     await tx.accessEvent.create({
       data: {
-        organizationId: ctx.organizationId,
+        organizationId,
         ticketId: ticket.id,
         gateId: gate.id,
         eventType: "ENTRY_GRANTED",
@@ -383,7 +384,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId,
     actorUserId: ctx.userId,
     action: "access.entry_granted",
     after: sanitizeForAudit({ ticketId: ticket.id, gate: gate.code }),
