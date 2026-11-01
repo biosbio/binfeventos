@@ -127,6 +127,7 @@ model OrgMembership {
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])
+  role         Role         @relation(fields: [roleId], references: [id])
 
   @@unique([organizationId, userId])
   @@map("org_memberships")
