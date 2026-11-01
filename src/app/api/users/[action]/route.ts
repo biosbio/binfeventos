@@ -126,7 +126,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         const ctxAuth = await requireAuth();
         const body = parseBody((await import("@/modules/users/schemas")).changePasswordSchema, await req.json());
         const { changePassword } = await import("@/modules/users/service");
-        await changePassword(ctxAuth.userId, body.currentPassword, body.newPassword);
+        await changePassword(ctxAuth.userId, body.currentPassword, body.newPassword, body.totpCode);
         return NextResponse.json({ ok: true });
       }
 
