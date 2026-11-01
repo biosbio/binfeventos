@@ -26,10 +26,13 @@ async function main(): Promise<void> {
 
   // 2. Papéis de sistema
   for (const [roleName, permCodes] of Object.entries(SYSTEM_ROLES)) {
-    const role = await prisma.role.upsert({
-      where: { name_organizationId: { name: roleName, organizationId: null } },
-      update: {},
-      create: { name: roleName, isSystem: true, organizationId: null },
+    const existingRole = await prisma.role.findFirst({
+      where: { name: roleName, organizationId: null, isSystem: true },
+      select: { id: true },
+    });
+    const role = existingRole ?? await prisma.role.create({
+      data: { name: roleName, isSystem: true, organizationId: null },
+      select: { id: true },
     });
 
     for (const code of permCodes) {
