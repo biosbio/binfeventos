@@ -500,13 +500,13 @@ export async function handleWebhook(
             },
             data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
           });
-          if (
-            staleAttempt.payment.order.holdId &&
-            ["RESERVED", "PENDING_PAYMENT"].includes(staleAttempt.payment.order.status)
-          ) {
-            await markHoldVerifying(staleAttempt.payment.order.holdId);
-          }
         });
+        if (
+          staleAttempt.payment.order.holdId &&
+          ["RESERVED", "PENDING_PAYMENT"].includes(staleAttempt.payment.order.status)
+        ) {
+          await markHoldVerifying(staleAttempt.payment.order.holdId);
+        }
         await writeAudit({
           organizationId: staleAttempt.payment.organizationId,
           actorUserId: null,
