@@ -85,6 +85,7 @@ export async function completePasswordRecovery(input: {
   }
 
   const user = await findAccountType(input.email);
+  let resetCodeId: string | null = null;
   if (!user || user.platformRole === "PLATFORM_ADMIN" && !input.totpCode) throw new UnauthorizedError();
   if (user.platformRole === "PLATFORM_ADMIN") {
     if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(input.totpCode ?? "")) {
@@ -109,17 +110,20 @@ export async function completePasswordRecovery(input: {
     if (attempt.count !== 1 || !safeEqual(record.codeHash, digest(input.code))) {
       throw new AppError("INVALID_RECOVERY_CODE", 401, "Código expirado ou inválido. Solicite outro.");
     }
-    const consumed = await prisma.passwordResetCode.updateMany({
-      where: { id: record.id, consumedAt: null, codeHash: digest(input.code), attempts: { lte: MAX_ATTEMPTS } },
-      data: { consumedAt: new Date() },
-    });
-    if (consumed.count !== 1) throw new AppError("INVALID_RECOVERY_CODE", 401, "Código já utilizado.");
+    resetCodeId = record.id;
   }
 
   const passwordHash = await hashPassword(input.newPassword);
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
-    prisma.session.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    if (resetCodeId) {
+      const consumed = await tx.passwordResetCode.updateMany({
+        where: { id: resetCodeId, userId: user.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lte: MAX_ATTEMPTS } },
+        data: { consumedAt: new Date() },
+      });
+      if (consumed.count !== 1) throw new AppError("INVALID_RECOVERY_CODE", 401, "Código já utilizado ou expirado.");
+    }
+    await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await tx.session.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+  });
   console.log("[audit] auth.password_recovered", { userId: user.id, ip });
 }
