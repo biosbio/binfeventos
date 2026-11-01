@@ -47,8 +47,11 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
 /** Autentica e cria a sessão (com MFA quando ativado). */
 export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
-  if (await rateLimit(`login:${ip ?? "unknown"}:${input.email}`, 10, 60_000)) {
-    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde um minuto.");
+  if (
+    await rateLimit(`login:ip:${ip ?? "unknown"}`, 30, 15 * 60 * 1000) ||
+    await rateLimit(`login:email:${input.email}`, 10, 15 * 60 * 1000)
+  ) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de acesso. Aguarde quinze minutos.");
   }
 
   const user = await prisma.user.findUnique({ where: { email: input.email } });
