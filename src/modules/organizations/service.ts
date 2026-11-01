@@ -146,6 +146,9 @@ export async function assignRole(
   roleName: string
 ): Promise<void> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (roleName === "PLATFORM_ADMIN") {
+    throw new ForbiddenError("platform-admin-role-cannot-be-assigned-to-members");
+  }
 
   const role = await prisma.role.findFirst({
     where: {
