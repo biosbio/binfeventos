@@ -76,9 +76,6 @@ export type PermissionCode = (typeof PERMISSIONS)[number]["code"];
 
 /** Papéis de sistema (isSystem=true) e suas permissões. */
 export const SYSTEM_ROLES: Record<string, PermissionCode[]> = {
-  // Administrador central da plataforma (Domínio 9)
-  PLATFORM_ADMIN: ["admin:platform", "subscription:manage", "audit:read"],
-
   // Administrador da organização — tudo dentro da org
   ORG_ADMIN: [
     "org:manage", "org:invite", "org:role:assign",
