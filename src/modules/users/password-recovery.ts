@@ -35,12 +35,9 @@ export async function startPasswordRecovery(email: string, channel: "EMAIL" | "S
   if (!user || user.platformRole === "PLATFORM_ADMIN") return;
 
   const isOrganizer = user.memberships.length > 0;
-  if (isOrganizer && channel !== "EMAIL") {
-    throw new AppError("EMAIL_REQUIRED", 422, "A recuperação de contas de organizador é feita pelo email cadastrado.");
-  }
-  if (channel === "SMS" && !user.phone) {
-    throw new AppError("PHONE_REQUIRED", 422, "Esta conta não tem telemóvel cadastrado. Utilize o email.");
-  }
+  // Resposta silenciosa para evitar revelar se a conta existe ou o seu tipo.
+  if (isOrganizer && channel !== "EMAIL") return;
+  if (channel === "SMS" && !user.phone) return;
 
   const recent = await prisma.passwordResetCode.findFirst({
     where: { userId: user.id },
