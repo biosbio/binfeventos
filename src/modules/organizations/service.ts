@@ -156,18 +156,16 @@ export async function assignRole(
     throw new ForbiddenError("role-from-other-org");
   }
 
-  const membership = await prisma.orgMembership.update({
-    where: { id: memberId },
+  // O filtro de organização faz parte da própria escrita. Nunca alterar
+  // primeiro um membro de outra organização e só depois rejeitar a operação.
+  const updated = await prisma.orgMembership.updateMany({
+    where: { id: memberId, organizationId: ctx.organizationId },
     data: { roleId: role.id },
   });
-
-  // Isolamento: só altera papéis DENTRO da organização do contexto
-  if (membership.organizationId !== ctx.organizationId) {
-    throw new ForbiddenError("membership-from-other-org");
-  }
+  if (updated.count !== 1) throw new NotFoundError("Membro");
 
   await writeAudit({
-    organizationId: membership.organizationId,
+    organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "org.member_role_changed",
     after: { memberId, roleName },
