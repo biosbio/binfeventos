@@ -24,8 +24,8 @@ const batchStatusSchema = z.object({
   to: z.enum(["OPEN", "PAUSED", "CLOSED"]),
 });
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string[] }> }) {
-  const { action } = await ctx.params;
+export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action = [] } = await ctx.params;
   const path = action.join("/");
 
   try {
