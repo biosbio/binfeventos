@@ -60,6 +60,9 @@ export class MulticaixaExpressAdapter implements PaymentAdapter {
       };
     }
 
+    // A referência enviada é a mesma que a EMIS devolve no webhook.
+    // Não usar data.id: é um identificador interno diferente da referência.
+    const reference = input.idempotencyKey.slice(0, 40);
     const response = await fetch(`${config.baseUrl}/frameToken`, {
       method: "POST",
       headers: {
@@ -68,7 +71,7 @@ export class MulticaixaExpressAdapter implements PaymentAdapter {
       },
       body: JSON.stringify({
         posID: config.posId,
-        reference: input.idempotencyKey.slice(0, 40),
+        reference,
         amount: input.amountCents / 100, // EMIS espera valor em kwanzas (decimal)
         mobile: false,
         card: "DISABLED",
@@ -81,7 +84,7 @@ export class MulticaixaExpressAdapter implements PaymentAdapter {
       // Prestador indisponível: UNKNOWN preserva o inventário
       // para análise manual (Opção C), nunca CANCELLED.
       return {
-        providerRef: `mcx_pending_${input.paymentId}`,
+        providerRef: reference,
         status: "UNKNOWN",
         rawPayload: { httpStatus: response.status, code: this.code },
       };
@@ -90,14 +93,14 @@ export class MulticaixaExpressAdapter implements PaymentAdapter {
     const data = (await response.json()) as EmisFrameResponse;
     if (data.errors?.length || !data.frameToken) {
       return {
-        providerRef: data.id ?? `mcx_declined_${input.paymentId}`,
+        providerRef: data.reference ?? reference,
         status: "DECLINED",
         rawPayload: data as unknown,
       };
     }
 
     return {
-      providerRef: data.id ?? data.reference ?? `mcx_${input.paymentId}`,
+      providerRef: reference,
       status: "INITIATED",
       // Deeplink/QR para o utilizador abrir o Multicaixa Express
       redirectUrl: `https://www.multicaixaexpress.ao/qr/payment?token=${encodeURIComponent(data.frameToken)}`,
