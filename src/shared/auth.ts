@@ -68,33 +68,35 @@ export async function getAuthContext(): Promise<AuthContext | null> {
 
   const session = await prisma.session.findUnique({
     where: { tokenHash: sha256(token) },
-    include: {
-      user: {
-        include: {
-          memberships: {
-            where: { acceptedAt: { not: null } },
-            include: {
-              role: {
-                include: {
-                  permissions: { include: { permission: true } },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    include: { user: true },
   });
 
   if (!session) return null;
   if (session.revokedAt || session.expiresAt < new Date()) return null;
   if (session.user.status !== "ACTIVE") return null;
 
-  // Permissões efetivas: união de todos os papéis do utilizador
+  // Permissões limitadas à organização ativa da sessão (ABAC).
+  // Nunca agregar permissões de organizações diferentes.
   const permissions = new Set<string>();
-  for (const m of session.user.memberships) {
-    for (const rp of m.role.permissions) {
-      permissions.add(rp.permission.code);
+  if (session.organizationId) {
+    const memberships = await prisma.orgMembership.findMany({
+      where: {
+        userId: session.userId,
+        organizationId: session.organizationId,
+        acceptedAt: { not: null },
+      },
+      include: {
+        role: {
+          include: {
+            rolePermissions: { include: { permission: true } },
+          },
+        },
+      },
+    });
+    for (const membership of memberships) {
+      for (const rolePermission of membership.role.rolePermissions) {
+        permissions.add(rolePermission.permission.code);
+      }
     }
   }
 
