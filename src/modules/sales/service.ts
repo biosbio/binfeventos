@@ -57,6 +57,7 @@ export async function createOrder(
   status: string;
 }> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
 
   const idempotencyKey = input.checkoutIdempotencyKey ?? generateIdempotencyKey();
 
@@ -69,7 +70,7 @@ export async function createOrder(
       commissionCents: true, status: true,
     },
   });
-  if (existing) return existing;
+  if (existing) return { orderId: existing.id, orderNumber: existing.orderNumber, totalCents: existing.totalCents, currency: existing.currency, subtotalCents: existing.subtotalCents, serviceFeeCents: existing.serviceFeeCents, taxCents: existing.taxCents, commissionCents: existing.commissionCents, status: existing.status };
 
   // Hold válido da organização do contexto
   const hold = await prisma.inventoryHold.findUnique({ where: { id: input.holdId } });
@@ -123,7 +124,7 @@ export async function createOrder(
 
     const created = await tx.order.create({
       data: {
-        organizationId: ctx.organizationId,
+        organizationId,
         orderNumber: await nextOrderNumber(),
         buyerUserId: ctx.userId,
         buyerName: input.buyerName,
