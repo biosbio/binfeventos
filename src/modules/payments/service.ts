@@ -338,6 +338,9 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     }),
   });
   if (!attached) {
+    if (!terminalDecline) {
+      await flagOrderForPaymentReview(order.id, result.rawPayload);
+    }
     throw new BusinessRuleError("A encomenda foi alterada durante a iniciação. O resultado do prestador permanece em revisão.");
   }
 
