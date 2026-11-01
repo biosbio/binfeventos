@@ -26,6 +26,14 @@ async function main(): Promise<void> {
     });
     systemRoles.set(roleName, role.id);
 
+    // Sincroniza permissões: não conservar privilégios removidos do catálogo.
+    await prisma.rolePermission.deleteMany({
+      where: {
+        roleId: role.id,
+        permission: { code: { notIn: permCodes } },
+      },
+    });
+
     for (const code of permCodes) {
       const perm = await prisma.permission.findUnique({ where: { code } });
       if (!perm) throw new Error(`Permissão não encontrada no seed: ${code}`);
@@ -43,7 +51,10 @@ async function main(): Promise<void> {
     create: { code: "cash", name: "Dinheiro (bilheteira física)", country: "GLOBAL", isActive: true },
   });
 
-  const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET ?? "dev-only-secret";
+  const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET;
+  if (!sandboxSecret || sandboxSecret.length < 32) {
+    throw new Error("Defina SANDBOX_WEBHOOK_SECRET com pelo menos 32 caracteres no ambiente. Não use segredos predefinidos.");
+  }
   await prisma.paymentProvider.upsert({
     where: { code: "sandbox" },
     update: {},
@@ -57,14 +68,14 @@ async function main(): Promise<void> {
   });
 
   const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "ChangeMe!2026";
+  const adminPassword = process.env.ADMIN_PASSWORD;
   const existingAdmin = await prisma.user.findUnique({
     where: { email: adminEmail },
     select: { id: true },
   });
   const adminSecret = process.env.ADMIN_MFA_SECRET;
-  if (!existingAdmin && !adminSecret) {
-    throw new Error("Defina ADMIN_MFA_SECRET no .env antes de criar o administrador. Não partilhe esse segredo.");
+  if (!existingAdmin && (!adminPassword || adminPassword.length < 12 || !adminSecret || adminSecret.length < 16)) {
+    throw new Error("Para criar o administrador, defina ADMIN_PASSWORD (mínimo 12 caracteres) e ADMIN_MFA_SECRET no ambiente. Não use credenciais predefinidas nem partilhe esses segredos.");
   }
 
   const admin = await prisma.user.upsert({
