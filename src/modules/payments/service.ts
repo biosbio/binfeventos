@@ -60,6 +60,19 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (order.status !== "RESERVED" && order.status !== "PENDING_PAYMENT") {
     throw new ConflictError(`Encomenda em estado ${order.status}.`);
   }
+  if (order.holdId) {
+    const hold = await prisma.inventoryHold.findUnique({
+      where: { id: order.holdId },
+      select: { status: true, organizationId: true },
+    });
+    if (
+      !hold ||
+      hold.organizationId !== order.organizationId ||
+      !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(hold.status)
+    ) {
+      throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
+    }
+  }
 
   const provider = await prisma.paymentProvider.findUnique({
     where: { code: input.providerCode },
