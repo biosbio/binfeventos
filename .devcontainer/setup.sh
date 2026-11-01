@@ -49,6 +49,9 @@ sed -i 's/@localhost:5432\//@db:5432\//g' .env
 npm install
 npx prisma generate
 npx prisma migrate deploy
+set -a
+. ./.env
+set +a
 npm run db:seed
 
 printf '\nBINF EVENTOS: ambiente preparado. Inicie a aplicação com a tarefa "BINF EVENTOS: iniciar".\n'
