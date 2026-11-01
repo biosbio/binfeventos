@@ -28,8 +28,8 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: npm
-      - name: Update npm
-        run: npm install --global npm@11
+      - name: Install dependencies with npm 11
+        run: npx --yes npm@11 ci --no-audit --no-fund
       - name: Generate ephemeral CI secrets
         shell: bash
         run: |
@@ -50,16 +50,6 @@ jobs:
           echo "ADMIN_MFA_SECRET=$ADMIN_MFA_SECRET" >> "$GITHUB_ENV"
           echo "MFA_ENCRYPTION_KEY=$MFA_ENCRYPTION_KEY" >> "$GITHUB_ENV"
           echo "SESSION_SECRET=$SESSION_SECRET" >> "$GITHUB_ENV"
-      # Temporário no PR: gera o lockfile atualizado após a migração de majors.
-      # Depois de commitar package-lock.json, voltar para npm ci.
-      - run: npm install --no-audit --no-fund
-      - name: Export regenerated lockfile for repository update
-        uses: actions/upload-artifact@v4
-        with:
-          name: regenerated-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
       - run: npm audit --audit-level=moderate
       - run: npx prisma generate
       - run: npx prisma validate
