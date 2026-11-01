@@ -21,9 +21,7 @@ export async function SiteHeader() {
         {auth ? (
           <>
             <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
-            <form action="/api/users/logout" method="post">
-              <button className="button button-primary" type="submit">Sair</button>
-            </form>
+            <Link className="button button-primary" href="/painel">Abrir painel</Link>
           </>
         ) : (
           <>
