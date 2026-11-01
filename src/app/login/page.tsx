@@ -33,7 +33,7 @@ export default function LoginPage() {
         setError(data.message ?? "Não foi possível entrar.");
         return;
       }
-      window.location.href = "/painel";
+      window.location.href = "/";
     } catch {
       setError("Erro de rede. Tente novamente.");
     } finally {
