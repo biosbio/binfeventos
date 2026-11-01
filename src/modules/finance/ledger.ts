@@ -32,6 +32,18 @@ export async function prepareSettlement(
   if (!ctx.permissions.has("settlement:prepare")) throw new ForbiddenError("settlement:prepare");
 
   const { periodStart, periodEnd } = input;
+  const existingSettlement = await prisma.settlement.findFirst({
+    where: {
+      organizationId: ctx.organizationId,
+      periodStart,
+      periodEnd,
+      status: { not: "CANCELLED" },
+    },
+    select: { id: true },
+  });
+  if (existingSettlement) {
+    throw new ConflictError("Já existe uma liquidação para este período.");
+  }
 
   // Agregações do período (fonte: base de dados, nunca cliente)
   const [orders, refunds, chargebacks, commission, providerFees] = await Promise.all([
@@ -47,7 +59,7 @@ export async function prepareSettlement(
       where: {
         organizationId: ctx.organizationId,
         createdAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["COMPLETED", "PROCESSING"] },
+        status: { in: ["APPROVED", "COMPLETED", "PROCESSING"] },
       },
       _sum: { amountCents: true },
     }),
