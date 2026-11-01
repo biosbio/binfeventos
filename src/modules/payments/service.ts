@@ -240,10 +240,12 @@ export async function confirmPayment(
     });
 
     // Consome o hold: reservado → vendido (transacional)
-    const hold = await tx.inventoryHold.findUnique({
-      where: { id: payment.order.holdId ?? "" },
-      select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
-    });
+    const hold = payment.order.holdId
+      ? await tx.inventoryHold.findUnique({
+          where: { id: payment.order.holdId },
+          select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
+        })
+      : null;
     if (hold && hold.status !== "CONFIRMED") {
       await tx.inventoryHold.update({
         where: { id: hold.id },
