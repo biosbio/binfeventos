@@ -11,10 +11,12 @@ import { z } from "zod";
 //   POST /api/catalog/run-expiration    — job de expiração (inventory:read)
 // ============================================================
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
