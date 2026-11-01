@@ -63,9 +63,9 @@ export async function startPasswordRecovery(email: string, channel: "EMAIL" | "S
 
   try {
     if (channel === "EMAIL") {
-      await deliverEmail(user.email, code, "Recuperação da palavra-passe — BINF EVENTOS");
+      await deliverEmail(user.email, code, "Recuperação da palavra-passe — BINF EVENTOS", 10);
     } else {
-      await deliverSms(user.phone!, code, "recuperação da palavra-passe");
+      await deliverSms(user.phone!, code, "recuperação da palavra-passe", 10);
     }
   } catch (error) {
     await prisma.passwordResetCode.update({ where: { id: record.id }, data: { consumedAt: new Date() } });
