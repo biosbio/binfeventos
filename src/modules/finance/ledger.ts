@@ -283,18 +283,19 @@ export async function createReserve(
 
 /** Libertar reserva (com lançamento compensatório no razão). */
 export async function releaseReserve(ctx: AuthContext, reserveId: string, notes: string) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("reserve:manage")) throw new ForbiddenError("reserve:manage");
 
   const reserve = await prisma.financialReserve.findUnique({ where: { id: reserveId } });
-  if (!reserve || reserve.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
+  if (!reserve || reserve.organizationId !== organizationId) throw new NotFoundError("Reserva");
   if (reserve.status === "RELEASED") throw new ConflictError("Reserva já libertada.");
 
   await prisma.$transaction(async (tx) => {
     const changed = await tx.financialReserve.updateMany({
       where: {
         id: reserve.id,
-        organizationId: ctx.organizationId,
+        organizationId: organizationId,
         status: { in: ["ACTIVE", "PARTIALLY_RELEASED"] },
       },
       data: { status: "RELEASED", releasedAt: new Date() },
@@ -314,7 +315,7 @@ export async function releaseReserve(ctx: AuthContext, reserveId: string, notes:
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: organizationId,
     actorUserId: ctx.userId,
     action: "reserve.released",
     after: sanitizeForAudit({ reserveId: reserve.id, notes }),
