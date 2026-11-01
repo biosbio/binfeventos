@@ -184,6 +184,23 @@ export async function confirmPayment(
   if (payment.status === "CONFIRMED") return; // idempotente
 
   const didConfirm = await prisma.$transaction(async (tx) => {
+    // Não converter uma encomenda cancelada/terminal em venda por causa
+    // de um webhook atrasado. O dinheiro recebido segue para revisão manual.
+    const orderClaim = await tx.order.updateMany({
+      where: {
+        id: payment.orderId,
+        status: { in: ["RESERVED", "PENDING_PAYMENT"] },
+      },
+      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    });
+    if (orderClaim.count !== 1) {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: { not: "CONFIRMED" } },
+        data: { status: "UNDER_REVIEW" },
+      });
+      return false;
+    }
+
     // Claim atómico: apenas um webhook concorrente pode confirmar o pagamento.
     const claim = await tx.payment.updateMany({
       where: { id: payment.id, status: { not: "CONFIRMED" } },
@@ -193,7 +210,9 @@ export async function confirmPayment(
         providerRawPayload: rawPayload as never,
       },
     });
-    if (claim.count !== 1) return false;
+    if (claim.count !== 1) {
+      throw new ConflictError("Pagamento já processado por outra operação.");
+    }
 
     // Opção B: tentativa ativa vira COMPLETED; as restantes ficam BLOCKED
     await tx.paymentAttempt.updateMany({
@@ -203,11 +222,6 @@ export async function confirmPayment(
     await tx.paymentAttempt.updateMany({
       where: { paymentId: payment.id, status: "BLOCKED" },
       data: { finishedAt: new Date() },
-    });
-
-    await tx.order.update({
-      where: { id: payment.orderId },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
     });
 
     // Consome o hold: reservado → vendido (transacional)
@@ -368,6 +382,15 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       { source: "manual-review", evidenceNotes: input.evidenceNotes },
       provider.code
     );
+    const confirmedPayment = await prisma.payment.findUnique({
+      where: { id: payment.id },
+      select: { status: true },
+    });
+    if (confirmedPayment?.status !== "CONFIRMED") {
+      throw new BusinessRuleError(
+        "A encomenda já não pode ser confirmada automaticamente; o caso permanece em revisão financeira."
+      );
+    }
     await writeAudit({
       organizationId: ctx.organizationId,
       actorUserId: ctx.userId,
