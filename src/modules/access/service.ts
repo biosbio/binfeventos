@@ -87,6 +87,9 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
           sessionId: order.sessionId,
           ticketTypeId: attendee.ticketTypeId,
           orderAttendeeId: attendee.id,
+          holderUserId: order.buyerUserId,
+          holderEmail: attendee.email,
+          holderName: attendee.fullName,
           ticketNumber: nextTicketNumber(),
           status: "ISSUED",
           qrSecretHash: sha256(secret),
@@ -119,84 +122,135 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
 
 /** Reemite o token QR de um bilhete (apenas titular autenticado). */
 export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<string> {
-  const ticket = await prisma.ticket.findUnique({
-    where: { id: ticketId },
-    include: { order: { select: { buyerUserId: true } } },
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "tickets" WHERE "id" = ${ticketId}::uuid FOR UPDATE`;
+    const [ticket, user] = await Promise.all([
+      tx.ticket.findUnique({
+        where: { id: ticketId },
+        include: { order: { select: { buyerUserId: true } } },
+      }),
+      tx.user.findUnique({ where: { id: ctx.userId }, select: { email: true } }),
+    ]);
+    if (!ticket || !user) throw new NotFoundError("Bilhete");
+    if (ticket.status !== "ISSUED" && ticket.status !== "USED") {
+      throw new BusinessRuleError("Bilhete não está válido.");
+    }
+
+    const emailMatches =
+      !ticket.holderUserId &&
+      !!ticket.holderEmail &&
+      ticket.holderEmail.toLowerCase() === user.email.toLowerCase();
+    const legacyBuyer =
+      !ticket.holderUserId && !ticket.holderEmail && ticket.order.buyerUserId === ctx.userId;
+    if (ticket.holderUserId !== ctx.userId && !emailMatches && !legacyBuyer) {
+      throw new ForbiddenError("not-current-ticket-holder");
+    }
+
+    // Associa o titular que acabou de autenticar com o email de destino.
+    if (!ticket.holderUserId) {
+      const bound = await tx.ticket.updateMany({
+        where: {
+          id: ticket.id,
+          holderUserId: null,
+          holderEmail: ticket.holderEmail,
+          status: { in: ["ISSUED", "USED"] },
+        },
+        data: { holderUserId: ctx.userId },
+      });
+      if (bound.count !== 1) throw new ConflictError("Titular do bilhete foi alterado.");
+    }
+
+    const secret = randomBytes(32).toString("base64url");
+    const rotated = await tx.ticket.updateMany({
+      where: { id: ticket.id, holderUserId: ctx.userId, status: { in: ["ISSUED", "USED"] } },
+      data: { qrSecretHash: sha256(secret), qrRotatedAt: new Date() },
+    });
+    if (rotated.count !== 1) throw new ConflictError("Não foi possível renovar o QR deste titular.");
+    return secret;
   });
-  if (!ticket) throw new NotFoundError("Bilhetes");
-  // Permissão operacional de leitura não concede poder para rotacionar
-  // o QR de um comprador. Apenas o comprador pode pedir novo token.
-  if (ticket.order.buyerUserId !== ctx.userId) {
-    throw new ForbiddenError("not-ticket-holder");
-  }
-  if (ticket.status !== "ISSUED" && ticket.status !== "USED") {
-    throw new BusinessRuleError("Bilhete não está válido.");
-  }
-  // Nota: o token original foi devolvido na emissão. Para reobter o QR,
-  // o backend ROTA o segredo (invalida o anterior) — mesmo mecanismo da
-  // transferência. Assim, tokens nunca ficam guardados em claro.
-  const secret = randomBytes(32).toString("base64url");
-  await prisma.ticket.update({
-    where: { id: ticket.id },
-    data: { qrSecretHash: sha256(secret), qrRotatedAt: new Date() },
-  });
-  return secret;
 }
 
 /** Solicitar transferência (titular atual; elegibilidade verificada). */
 export async function requestTransfer(ctx: AuthContext, input: IssueTransferInput) {
-  const ticket = await prisma.ticket.findUnique({
-    where: { id: input.ticketId },
-    include: { order: { select: { buyerUserId: true } }, session: { select: { startsAt: true } } },
-  });
-  if (!ticket) throw new NotFoundError("Bilhete");
-  const isBuyer = ticket.order.buyerUserId === ctx.userId;
-  const isOrgOperator =
-    ctx.organizationId === ticket.organizationId && ctx.permissions.has("transfer:approve");
-  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-ticket-holder");
-  if (
-    isOrgOperator &&
-    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
-  ) {
-    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  if (!input.newHolderEmail) {
+    throw new BusinessRuleError("O email do novo titular é obrigatório para concluir a transferência.");
   }
-  // Elegibilidade: bilhete emitido e sessão ainda não realizada
-  if (ticket.status !== "ISSUED") {
-    throw new BusinessRuleError("Bilhete utilizado, cancelado ou reembolsado não é transferível.");
-  }
-  if (ticket.session.startsAt.getTime() <= Date.now()) {
-    throw new BusinessRuleError("Fora do prazo de transferência.");
-  }
+  const request = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "tickets" WHERE "id" = ${input.ticketId}::uuid FOR UPDATE`;
+    const [ticket, user] = await Promise.all([
+      tx.ticket.findUnique({
+        where: { id: input.ticketId },
+        include: { order: { select: { buyerUserId: true } }, session: { select: { startsAt: true } } },
+      }),
+      tx.user.findUnique({ where: { id: ctx.userId }, select: { email: true } }),
+    ]);
+    if (!ticket || !user) throw new NotFoundError("Bilhete");
+    const emailMatches =
+      !ticket.holderUserId &&
+      !!ticket.holderEmail &&
+      ticket.holderEmail.toLowerCase() === user.email.toLowerCase();
+    const legacyBuyer =
+      !ticket.holderUserId && !ticket.holderEmail && ticket.order.buyerUserId === ctx.userId;
+    if (ticket.holderUserId !== ctx.userId && !emailMatches && !legacyBuyer) {
+      throw new ForbiddenError("not-current-ticket-holder");
+    }
+    if (input.newHolderEmail.toLowerCase() === user.email.toLowerCase()) {
+      throw new BusinessRuleError("O novo titular deve ser diferente do titular atual.");
+    }
+    if (ticket.status !== "ISSUED") {
+      throw new BusinessRuleError("Bilhete utilizado, cancelado ou reembolsado não é transferível.");
+    }
+    if (ticket.session.startsAt.getTime() <= Date.now()) {
+      throw new BusinessRuleError("Fora do prazo de transferência.");
+    }
+    if (!ticket.holderUserId) {
+      const bound = await tx.ticket.updateMany({
+        where: { id: ticket.id, holderUserId: null, holderEmail: ticket.holderEmail, status: "ISSUED" },
+        data: { holderUserId: ctx.userId },
+      });
+      if (bound.count !== 1) throw new ConflictError("Titular do bilhete foi alterado.");
+    }
+    const pending = await tx.ticketTransferRequest.findFirst({
+      where: {
+        ticketId: ticket.id,
+        status: { in: ["REQUESTED", "ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"] },
+      },
+      select: { id: true },
+    });
+    if (pending) throw new ConflictError("Já existe um pedido de transferência pendente.");
 
-  const request = await prisma.ticketTransferRequest.create({
-    data: {
-      organizationId: ticket.organizationId,
-      ticketId: ticket.id,
-      requesterUserId: ctx.userId,
-      newHolderFullName: input.newHolderFullName,
-      newHolderEmail: input.newHolderEmail ?? null,
-      newHolderPhone: input.newHolderPhone ?? null,
-      newHolderDocumentType: input.newHolderDocumentType ?? null,
-      newHolderDocumentNumber: input.newHolderDocumentNumber ?? null,
-      status: "ELIGIBILITY_CHECK",
-    },
-    select: { id: true },
+    return tx.ticketTransferRequest.create({
+      data: {
+        organizationId: ticket.organizationId,
+        ticketId: ticket.id,
+        requesterUserId: ctx.userId,
+        newHolderFullName: input.newHolderFullName,
+        newHolderEmail: input.newHolderEmail.toLowerCase(),
+        newHolderPhone: input.newHolderPhone ?? null,
+        newHolderDocumentType: input.newHolderDocumentType ?? null,
+        newHolderDocumentNumber: input.newHolderDocumentNumber ?? null,
+        status: "ELIGIBILITY_CHECK",
+      },
+      select: { id: true, organizationId: true, ticketId: true },
+    });
   });
 
   await writeAudit({
-    organizationId: ticket.organizationId,
+    organizationId: request.organizationId,
     actorUserId: ctx.userId,
     action: "ticket.transfer_requested",
-    after: sanitizeForAudit({ requestId: request.id, ticketId: ticket.id }),
+    after: sanitizeForAudit({ requestId: request.id, ticketId: request.ticketId }),
   });
-
-  return request;
+  return { id: request.id };
 }
 
 /** Aprovar/rejeitar transferência: rotação do QR (invalida o anterior). */
 export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("transfer:approve")) throw new ForbiddenError("transfer:approve");
+  if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
 
   const request = await prisma.ticketTransferRequest.findUnique({
     where: { id: input.requestId },
@@ -208,19 +262,24 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
   if (request.status !== "ELIGIBILITY_CHECK" && request.status !== "AWAITING_CONFIRMATION") {
     throw new ConflictError(`Pedido em estado ${request.status}.`);
   }
-  if (request.ticket.status !== "ISSUED") {
-    throw new BusinessRuleError("Bilhete deixou de ser elegível.");
+  if (request.ticket.status !== "ISSUED" || request.ticket.holderUserId !== request.requesterUserId) {
+    throw new BusinessRuleError("O titular mudou; este pedido de transferência já não é elegível.");
   }
 
   if (input.decision === "REJECT") {
-    await prisma.ticketTransferRequest.update({
-      where: { id: request.id },
+    const rejected = await prisma.ticketTransferRequest.updateMany({
+      where: {
+        id: request.id,
+        organizationId: ctx.organizationId,
+        status: { in: ["ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"] },
+      },
       data: {
         status: "REJECTED",
         rejectionReason: input.rejectionReason ?? "Sem razão indicada.",
         reviewedByUserId: ctx.userId,
       },
     });
+    if (rejected.count !== 1) throw new ConflictError("Pedido já foi processado.");
     await writeAudit({
       organizationId: ctx.organizationId,
       actorUserId: ctx.userId,
@@ -230,52 +289,90 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
     return { approved: false };
   }
 
+  if (!request.newHolderEmail) throw new BusinessRuleError("Pedido sem email do novo titular.");
   const secret = randomBytes(32).toString("base64url");
   const result = await prisma.$transaction(async (tx) => {
-    // Novo titular substitui o attendee do bilhete
+    await tx.$queryRaw`SELECT "id" FROM "tickets" WHERE "id" = ${request.ticketId}::uuid FOR UPDATE`;
+    const fresh = await tx.ticketTransferRequest.findUnique({
+      where: { id: request.id },
+      include: { ticket: true },
+    });
+    if (
+      !fresh ||
+      fresh.organizationId !== ctx.organizationId ||
+      !["ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"].includes(fresh.status) ||
+      fresh.ticket.status !== "ISSUED" ||
+      fresh.ticket.holderUserId !== fresh.requesterUserId
+    ) {
+      throw new ConflictError("Titular ou estado do pedido foi alterado.");
+    }
+
+    const recipient = await tx.user.findUnique({
+      where: { email: fresh.newHolderEmail.toLowerCase() },
+      select: { id: true },
+    });
     const attendee = await tx.orderAttendee.create({
       data: {
-        orderId: request.ticket.orderId,
-        ticketTypeId: request.ticket.ticketTypeId,
-        fullName: request.newHolderFullName,
-        email: request.newHolderEmail,
-        phone: request.newHolderPhone,
-        documentType: request.newHolderDocumentType,
-        documentNumber: request.newHolderDocumentNumber,
+        orderId: fresh.ticket.orderId,
+        ticketTypeId: fresh.ticket.ticketTypeId,
+        fullName: fresh.newHolderFullName,
+        email: fresh.newHolderEmail.toLowerCase(),
+        phone: fresh.newHolderPhone,
+        documentType: fresh.newHolderDocumentType,
+        documentNumber: fresh.newHolderDocumentNumber,
       },
       select: { id: true },
     });
 
-    await tx.ticket.update({
-      where: { id: request.ticket.id },
+    const claimed = await tx.ticket.updateMany({
+      where: {
+        id: fresh.ticketId,
+        status: "ISSUED",
+        holderUserId: fresh.ticket.holderUserId,
+        holderEmail: fresh.ticket.holderEmail,
+      },
       data: {
-        orderAttendeeId: attendee.id,
         status: "TRANSFERRED",
-        qrSecretHash: sha256(secret), // ROTAÇÃO: QR anterior invalidado
+        orderAttendeeId: attendee.id,
+        holderUserId: recipient?.id ?? null,
+        holderEmail: fresh.newHolderEmail.toLowerCase(),
+        holderName: fresh.newHolderFullName,
+        qrSecretHash: sha256(secret),
         qrRotatedAt: new Date(),
       },
     });
+    if (claimed.count !== 1) throw new ConflictError("Bilhete já foi transferido por outro pedido.");
 
-    // TRANSFERRED continua com direito de entrada; volta a ISSUED com novo titular
-    await tx.ticket.update({
-      where: { id: request.ticket.id },
+    await tx.ticket.updateMany({
+      where: { id: fresh.ticketId, status: "TRANSFERRED" },
       data: { status: "ISSUED" },
     });
-
-    return tx.ticketTransferRequest.update({
-      where: { id: request.id },
+    const completed = await tx.ticketTransferRequest.updateMany({
+      where: {
+        id: fresh.id,
+        status: { in: ["ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"] },
+      },
       data: { status: "COMPLETED", reviewedByUserId: ctx.userId, completedAt: new Date() },
-      select: { id: true },
     });
+    if (completed.count !== 1) throw new ConflictError("Pedido já foi concluído.");
+
+    await tx.ticketTransferRequest.updateMany({
+      where: {
+        ticketId: fresh.ticketId,
+        id: { not: fresh.id },
+        status: { in: ["REQUESTED", "ELIGIBILITY_CHECK", "AWAITING_CONFIRMATION"] },
+      },
+      data: { status: "CANCELLED" },
+    });
+    return { id: fresh.id, ticketId: fresh.ticketId };
   });
 
   await writeAudit({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "ticket.transfer_completed",
-    after: sanitizeForAudit({ requestId: result.id, ticketId: request.ticketId }),
+    after: sanitizeForAudit({ requestId: result.id, ticketId: result.ticketId }),
   });
-
   return { approved: true, newQrToken: secret };
 }
 
