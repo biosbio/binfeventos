@@ -32,6 +32,18 @@ export async function prepareSettlement(
   if (!ctx.permissions.has("settlement:prepare")) throw new ForbiddenError("settlement:prepare");
 
   const { periodStart, periodEnd } = input;
+  const existingSettlement = await prisma.settlement.findFirst({
+    where: {
+      organizationId: ctx.organizationId,
+      periodStart,
+      periodEnd,
+      status: { not: "CANCELLED" },
+    },
+    select: { id: true },
+  });
+  if (existingSettlement) {
+    throw new ConflictError("Já existe uma liquidação para este período.");
+  }
 
   // Agregações do período (fonte: base de dados, nunca cliente)
   const [orders, refunds, chargebacks, commission, providerFees] = await Promise.all([
@@ -47,7 +59,7 @@ export async function prepareSettlement(
       where: {
         organizationId: ctx.organizationId,
         createdAt: { gte: periodStart, lte: periodEnd },
-        status: { in: ["COMPLETED", "PROCESSING"] },
+        status: { in: ["APPROVED", "COMPLETED", "PROCESSING"] },
       },
       _sum: { amountCents: true },
     }),
@@ -144,18 +156,20 @@ export async function decideSettlement(
   }
 
   if (input.decision === "REJECT") {
-    await prisma.settlement.update({
-      where: { id: settlement.id },
+    const changed = await prisma.settlement.updateMany({
+      where: { id: settlement.id, organizationId: ctx.organizationId, status: "PENDING" },
       data: { status: "CANCELLED", approvedByUserId: ctx.userId },
     });
+    if (changed.count !== 1) throw new ConflictError("Liquidação já foi processada.");
     return { approved: false };
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.settlement.update({
-      where: { id: settlement.id },
+    const changed = await tx.settlement.updateMany({
+      where: { id: settlement.id, organizationId: ctx.organizationId, status: "PENDING" },
       data: { status: "APPROVED", approvedByUserId: ctx.userId },
     });
+    if (changed.count !== 1) throw new ConflictError("Liquidação já foi processada.");
 
     // Lançamento no livro-razão (imutável)
     await tx.financialLedgerEntry.create({
@@ -182,16 +196,19 @@ export async function decideSettlement(
 
 /** Marcar liquidação como paga (após transferência bancária). */
 export async function markSettlementPaid(ctx: AuthContext, settlementId: string) {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("settlement:approve")) throw new ForbiddenError("settlement:approve");
   const settlement = await prisma.settlement.findUnique({ where: { id: settlementId } });
-  if (!settlement) throw new NotFoundError("Liquidação");
-  if (settlement.status !== "APPROVED") {
-    throw new ConflictError("Apenas liquidações aprovadas podem ser marcadas como pagas.");
+  if (!settlement || settlement.organizationId !== ctx.organizationId) {
+    throw new NotFoundError("Liquidação");
   }
-  await prisma.settlement.update({
-    where: { id: settlement.id },
+  const changed = await prisma.settlement.updateMany({
+    where: { id: settlement.id, organizationId: ctx.organizationId, status: "APPROVED" },
     data: { status: "PAID", paidAt: new Date() },
   });
+  if (changed.count !== 1) {
+    throw new ConflictError("Apenas liquidações aprovadas e ainda não pagas podem ser marcadas como pagas.");
+  }
   await writeAudit({
     organizationId: settlement.organizationId,
     actorUserId: ctx.userId,
@@ -208,27 +225,38 @@ export async function createReserve(
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("reserve:manage")) throw new ForbiddenError("reserve:manage");
 
-  const reserve = await prisma.financialReserve.create({
-    data: {
-      organizationId: ctx.organizationId,
-      amountCents: input.amountCents,
-      reason: input.reason,
-      releaseConditions: input.releaseConditions ?? null,
-      settlementId: input.settlementId ?? null,
-      status: "ACTIVE",
-    },
-    select: { id: true },
-  });
+  if (input.settlementId) {
+    const linkedSettlement = await prisma.settlement.findFirst({
+      where: { id: input.settlementId, organizationId: ctx.organizationId },
+      select: { id: true },
+    });
+    if (!linkedSettlement) throw new NotFoundError("Liquidação");
+  }
 
-  await prisma.financialLedgerEntry.create({
-    data: {
-      organizationId: ctx.organizationId,
-      type: "RESERVE",
-      amountCents: input.amountCents,
-      settlementId: input.settlementId ?? null,
-      description: input.reason,
-      approvedByUserId: ctx.userId,
-    },
+  const reserve = await prisma.$transaction(async (tx) => {
+    const created = await tx.financialReserve.create({
+      data: {
+        organizationId: ctx.organizationId!,
+        amountCents: input.amountCents,
+        reason: input.reason,
+        releaseConditions: input.releaseConditions ?? null,
+        settlementId: input.settlementId ?? null,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+
+    await tx.financialLedgerEntry.create({
+      data: {
+        organizationId: ctx.organizationId!,
+        type: "RESERVE",
+        amountCents: input.amountCents,
+        settlementId: input.settlementId ?? null,
+        description: input.reason,
+        approvedByUserId: ctx.userId,
+      },
+    });
+    return created;
   });
 
   await writeAudit({
@@ -251,10 +279,16 @@ export async function releaseReserve(ctx: AuthContext, reserveId: string, notes:
   if (reserve.status === "RELEASED") throw new ConflictError("Reserva já libertada.");
 
   await prisma.$transaction(async (tx) => {
-    await tx.financialReserve.update({
-      where: { id: reserve.id },
+    const changed = await tx.financialReserve.updateMany({
+      where: {
+        id: reserve.id,
+        organizationId: ctx.organizationId,
+        status: { in: ["ACTIVE", "PARTIALLY_RELEASED"] },
+      },
       data: { status: "RELEASED", releasedAt: new Date() },
     });
+    if (changed.count !== 1) throw new ConflictError("Reserva já foi libertada.");
+
     await tx.financialLedgerEntry.create({
       data: {
         organizationId: reserve.organizationId,
