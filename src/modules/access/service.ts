@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import { prisma } from "@/shared/lib/prisma";
 import { sha256 } from "@/shared/lib/security";
 import {
+  AppError,
   BusinessRuleError,
   ConflictError,
   ForbiddenError,
@@ -42,60 +43,78 @@ function nextTicketNumber(): string {
 export async function issueTicketsForOrder(orderId: string): Promise<{
   tickets: { ticketId: string; ticketNumber: string; qrToken: string; holder: string }[];
 }> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      lines: true,
-      attendees: true,
-      session: { select: { id: true, eventId: true } },
-    },
-  });
-  if (!order) throw new NotFoundError("Encomenda");
-  if (order.status !== "CONFIRMED") {
-    throw new BusinessRuleError("Bilhetes só são emitidos após pagamento confirmado.");
-  }
+  const result = await prisma.$transaction(async (tx) => {
+    // Serializa a emissão por encomenda e evita emissão parcial.
+    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
+    if (locked.length === 0) throw new NotFoundError("Encomenda");
 
-  // Idempotência: se já existem bilhetes, não reemite
-  const existing = await prisma.ticket.count({ where: { orderId } });
-  if (existing > 0) return { tickets: [] };
-
-  const tickets: {
-    ticketId: string; ticketNumber: string; qrToken: string; holder: string;
-  }[] = [];
-
-  // Um bilhete por titular identificado (quantidade == attendees do tipo)
-  for (const attendee of order.attendees) {
-    const secret = randomBytes(32).toString("base64url");
-    const ticket = await prisma.ticket.create({
-      data: {
-        organizationId: order.organizationId,
-        orderId: order.id,
-        sessionId: order.sessionId!,
-        ticketTypeId: attendee.ticketTypeId,
-        orderAttendeeId: attendee.id,
-        ticketNumber: nextTicketNumber(),
-        status: "ISSUED",
-        qrSecretHash: sha256(secret),
-        reentryAllowed: false, // por regras do evento (config futura)
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lines: true,
+        attendees: true,
+        session: { select: { id: true, eventId: true } },
       },
-      select: { id: true, ticketNumber: true },
     });
-    tickets.push({
-      ticketId: ticket.id,
-      ticketNumber: ticket.ticketNumber,
-      qrToken: secret, // devolvido UMA vez ao titular
-      holder: attendee.fullName,
+    if (!order) throw new NotFoundError("Encomenda");
+    if (order.status !== "CONFIRMED") {
+      throw new BusinessRuleError("Bilhetes só são emitidos após pagamento confirmado.");
+    }
+    if (!order.sessionId || !order.session) {
+      throw new BusinessRuleError("Encomenda sem sessão válida; emissão bloqueada.");
+    }
+
+    const alreadyIssued = await tx.ticket.findMany({
+      where: { orderId },
+      select: { orderAttendeeId: true },
+    });
+    const issuedAttendeeIds = new Set(
+      alreadyIssued.flatMap((ticket) => ticket.orderAttendeeId ? [ticket.orderAttendeeId] : [])
+    );
+
+    const tickets: {
+      ticketId: string; ticketNumber: string; qrToken: string; holder: string;
+    }[] = [];
+
+    // Recupera emissões parciais antigas sem duplicar titulares.
+    for (const attendee of order.attendees) {
+      if (issuedAttendeeIds.has(attendee.id)) continue;
+      const secret = randomBytes(32).toString("base64url");
+      const ticket = await tx.ticket.create({
+        data: {
+          organizationId: order.organizationId,
+          orderId: order.id,
+          sessionId: order.sessionId,
+          ticketTypeId: attendee.ticketTypeId,
+          orderAttendeeId: attendee.id,
+          ticketNumber: nextTicketNumber(),
+          status: "ISSUED",
+          qrSecretHash: sha256(secret),
+          reentryAllowed: false,
+        },
+        select: { id: true, ticketNumber: true },
+      });
+      tickets.push({
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        qrToken: secret,
+        holder: attendee.fullName,
+      });
+    }
+
+    return { organizationId: order.organizationId, tickets };
+  });
+
+  if (result.tickets.length > 0) {
+    await writeAudit({
+      organizationId: result.organizationId,
+      actorUserId: null,
+      action: "ticket.issued",
+      after: sanitizeForAudit({ orderId, count: result.tickets.length }),
     });
   }
 
-  await writeAudit({
-    organizationId: order.organizationId,
-    actorUserId: null,
-    action: "ticket.issued",
-    after: sanitizeForAudit({ orderId, count: tickets.length }),
-  });
-
-  return { tickets };
+  return { tickets: result.tickets };
 }
 
 /** Reemite o token QR de um bilhete (apenas titular autenticado). */
@@ -104,8 +123,10 @@ export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<st
     where: { id: ticketId },
     include: { order: { select: { buyerUserId: true } } },
   });
-  if (!ticket || ticket.organizationId !== ctx.organizationId) throw new NotFoundError("Bilhetes");
-  if (ticket.order.buyerUserId !== ctx.userId && !ctx.permissions.has("ticket:read")) {
+  if (!ticket) throw new NotFoundError("Bilhetes");
+  // Permissão operacional de leitura não concede poder para rotacionar
+  // o QR de um comprador. Apenas o comprador pode pedir novo token.
+  if (ticket.order.buyerUserId !== ctx.userId) {
     throw new ForbiddenError("not-ticket-holder");
   }
   if (ticket.status !== "ISSUED" && ticket.status !== "USED") {
@@ -124,14 +145,20 @@ export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<st
 
 /** Solicitar transferência (titular atual; elegibilidade verificada). */
 export async function requestTransfer(ctx: AuthContext, input: IssueTransferInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const ticket = await prisma.ticket.findUnique({
     where: { id: input.ticketId },
     include: { order: { select: { buyerUserId: true } }, session: { select: { startsAt: true } } },
   });
-  if (!ticket || ticket.organizationId !== ctx.organizationId) throw new NotFoundError("Bilhete");
-  if (ticket.order.buyerUserId !== ctx.userId && !ctx.permissions.has("transfer:approve")) {
-    throw new ForbiddenError("not-ticket-holder");
+  if (!ticket) throw new NotFoundError("Bilhete");
+  const isBuyer = ticket.order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === ticket.organizationId && ctx.permissions.has("transfer:approve");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-ticket-holder");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   // Elegibilidade: bilhete emitido e sessão ainda não realizada
   if (ticket.status !== "ISSUED") {
@@ -143,7 +170,7 @@ export async function requestTransfer(ctx: AuthContext, input: IssueTransferInpu
 
   const request = await prisma.ticketTransferRequest.create({
     data: {
-      organizationId: ctx.organizationId,
+      organizationId: ticket.organizationId,
       ticketId: ticket.id,
       requesterUserId: ctx.userId,
       newHolderFullName: input.newHolderFullName,
@@ -157,7 +184,7 @@ export async function requestTransfer(ctx: AuthContext, input: IssueTransferInpu
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: ticket.organizationId,
     actorUserId: ctx.userId,
     action: "ticket.transfer_requested",
     after: sanitizeForAudit({ requestId: request.id, ticketId: ticket.id }),
@@ -297,8 +324,12 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (!ticket) return deny("INVALID_QR");
   if (ticket.organizationId !== ctx.organizationId) return deny("INVALID_QR");
 
-  if (ticket.status === "CANCELLED") return deny("TICKET_CANCELLED");
+  if (ticket.order.status !== "CONFIRMED" && ticket.order.status !== "PARTIALLY_REFUNDED") {
+    return deny("TICKET_CANCELLED");
+  }
+  if (ticket.status === "CANCELLED" || ticket.status === "EXPIRED") return deny("TICKET_CANCELLED");
   if (ticket.status === "REVOKED") return deny("TICKET_REVOKED");
+  if (ticket.status !== "ISSUED" && ticket.status !== "USED") return deny("TICKET_CANCELLED");
 
   // Sessão correta (WRONG_SESSION)
   if (gate.sessionId && gate.sessionId !== ticket.session.id) {
@@ -312,8 +343,15 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   }
 
   if (gate.gateType === "EXIT") {
-    // Saída: regista e guarda lastExitAt
-    await prisma.$transaction(async (tx) => {
+    if (ticket.status !== "USED") return deny("ALREADY_USED");
+    // Saída só é registada uma vez por entrada; update condicional evita
+    // duas leituras concorrentes criarem duas saídas válidas.
+    const exited = await prisma.$transaction(async (tx) => {
+      const claim = await tx.ticket.updateMany({
+        where: { id: ticket.id, status: "USED", lastExitAt: null },
+        data: { lastExitAt: now },
+      });
+      if (claim.count !== 1) return false;
       await tx.accessEvent.create({
         data: {
           organizationId,
@@ -325,11 +363,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
           identityVerified: input.identityVerified,
         },
       });
-      await tx.ticket.update({
-        where: { id: ticket.id },
-        data: { lastExitAt: now },
-      });
+      return true;
     });
+    if (!exited) return deny("ALREADY_USED");
     return { allowed: true, action: "EXIT_RECORDED", holder: ticket.orderAttendee?.fullName };
   }
 
@@ -337,7 +373,17 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (ticket.status === "USED") {
     // Reentrada só com permissão e saída registada
     if (ticket.reentryAllowed && ticket.lastExitAt) {
-      await prisma.$transaction(async (tx) => {
+      const reentered = await prisma.$transaction(async (tx) => {
+        const claim = await tx.ticket.updateMany({
+          where: {
+            id: ticket.id,
+            status: "USED",
+            reentryAllowed: true,
+            lastExitAt: ticket.lastExitAt,
+          },
+          data: { entryCount: { increment: 1 }, lastExitAt: null },
+        });
+        if (claim.count !== 1) return false;
         await tx.accessEvent.create({
           data: {
             organizationId,
@@ -349,11 +395,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
             identityVerified: input.identityVerified,
           },
         });
-        await tx.ticket.update({
-          where: { id: ticket.id },
-          data: { entryCount: { increment: 1 }, status: "USED" },
-        });
+        return true;
       });
+      if (!reentered) return deny("ALREADY_USED");
       return { allowed: true, action: "REENTRY_GRANTED", holder: ticket.orderAttendee?.fullName };
     }
     return deny("ALREADY_USED");
@@ -365,7 +409,12 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   }
 
   // Entrada concedida (transação atômica: ninguça passa duas vezes)
-  await prisma.$transaction(async (tx) => {
+  const entered = await prisma.$transaction(async (tx) => {
+    const claim = await tx.ticket.updateMany({
+      where: { id: ticket.id, status: "ISSUED" },
+      data: { status: "USED", entryCount: { increment: 1 } },
+    });
+    if (claim.count !== 1) return false;
     await tx.accessEvent.create({
       data: {
         organizationId,
@@ -377,11 +426,9 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
         identityVerified: input.identityVerified,
       },
     });
-    await tx.ticket.update({
-      where: { id: ticket.id },
-      data: { status: "USED", entryCount: { increment: 1 } },
-    });
+    return true;
   });
+  if (!entered) return deny("ALREADY_USED");
 
   await writeAudit({
     organizationId,
