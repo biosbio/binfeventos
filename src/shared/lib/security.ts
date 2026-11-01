@@ -1,4 +1,10 @@
-import { randomBytes, createHash, timingSafeEqual } from "crypto";
+import {
+  randomBytes,
+  createHash,
+  timingSafeEqual,
+  createCipheriv,
+  createDecipheriv,
+} from "crypto";
 import { prisma } from "@/shared/lib/prisma";
 
 // ============================================================
@@ -15,6 +21,49 @@ export async function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(hash: string, password: string): Promise<boolean> {
   const argon2 = await import("argon2");
   return argon2.verify(hash, password);
+}
+
+/**
+ * Encriptação AES-256-GCM dos segredos TOTP em repouso.
+ * MFA_ENCRYPTION_KEY deve ser uma chave hexadecimal de 64 caracteres.
+ * Valores legados em texto claro são lidos para migração gradual após login.
+ */
+function mfaEncryptionKey(): Buffer {
+  const raw = process.env.MFA_ENCRYPTION_KEY?.trim();
+  if (!raw || !/^[0-9a-fA-F]{64}$/.test(raw)) {
+    throw new Error("MFA_ENCRYPTION_KEY deve conter 64 caracteres hexadecimais (32 bytes).");
+  }
+  return Buffer.from(raw, "hex");
+}
+
+export function encryptMfaSecret(secret: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", mfaEncryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${ciphertext.toString("base64url")}`;
+}
+
+export function isEncryptedMfaSecret(value: string): boolean {
+  return value.startsWith("enc:v1:");
+}
+
+export function decryptMfaSecret(value: string): string {
+  if (!isEncryptedMfaSecret(value)) return value; // migração legada
+  const parts = value.split(":");
+  if (parts.length !== 5) throw new Error("Formato de segredo MFA inválido.");
+  const [, version, ivEncoded, tagEncoded, ciphertextEncoded] = parts;
+  if (version !== "v1") throw new Error("Versão de segredo MFA não suportada.");
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    mfaEncryptionKey(),
+    Buffer.from(ivEncoded, "base64url")
+  );
+  decipher.setAuthTag(Buffer.from(tagEncoded, "base64url"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(ciphertextEncoded, "base64url")),
+    decipher.final(),
+  ]).toString("utf8");
 }
 
 /** Token de sessão opaco: retorna (token_plano, hash_guardado). */
