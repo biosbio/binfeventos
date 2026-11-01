@@ -7,7 +7,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import { getAdapter, type ProviderResultStatus } from "./adapter";
@@ -44,12 +44,18 @@ const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
 
 /** Iniciar pagamento: cria/atualiza Payment + nova tentativa (Opção B). */
 export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-
   const order = await prisma.order.findUnique({ where: { id: input.orderId } });
-  if (!order || order.organizationId !== ctx.organizationId) throw new NotFoundError("Encomenda");
-  if (order.buyerUserId !== ctx.userId && !ctx.permissions.has("boxoffice:sell")) {
-    throw new ForbiddenError("not-buyer");
+  if (!order) throw new NotFoundError("Encomenda");
+  const isBuyer = order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === order.organizationId && ctx.permissions.has("boxoffice:sell");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-buyer");
+  await assertOrgActive(order.organizationId);
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   if (order.status !== "RESERVED" && order.status !== "PENDING_PAYMENT") {
     throw new ConflictError(`Encomenda em estado ${order.status}.`);
@@ -61,13 +67,23 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(provider.code);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador do prestador não instalado.");
+  if (provider.code === "multicaixa-express" && order.currency !== "AOA") {
+    throw new BusinessRuleError("Multicaixa Express só aceita encomendas em AOA.");
+  }
 
   // Idempotência da tentativa
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
   const existingAttempt = await prisma.paymentAttempt.findUnique({
     where: { idempotencyKey: attemptKey },
+    include: { payment: { select: { id: true, orderId: true, organizationId: true } } },
   });
   if (existingAttempt) {
+    if (
+      existingAttempt.payment.orderId !== order.id ||
+      existingAttempt.payment.organizationId !== order.organizationId
+    ) {
+      throw new ConflictError("Chave de idempotência de pagamento já utilizada.");
+    }
     return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
@@ -145,7 +161,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: order.organizationId,
     actorUserId: ctx.userId,
     action: "payment.initiated",
     after: sanitizeForAudit({
@@ -183,22 +199,36 @@ export async function confirmPayment(
   }
   if (payment.status === "CONFIRMED") return; // idempotente
 
-  await prisma.$transaction(async (tx) => {
-    // Revalida estado dentro da transação (webhook pode repetir)
-    const fresh = await tx.payment.findUnique({
-      where: { id: payment.id },
-      select: { status: true },
+  const didConfirm = await prisma.$transaction(async (tx) => {
+    // Não converter uma encomenda cancelada/terminal em venda por causa
+    // de um webhook atrasado. O dinheiro recebido segue para revisão manual.
+    const orderClaim = await tx.order.updateMany({
+      where: {
+        id: payment.orderId,
+        status: { in: ["RESERVED", "PENDING_PAYMENT"] },
+      },
+      data: { status: "CONFIRMED", confirmedAt: new Date() },
     });
-    if (!fresh || fresh.status === "CONFIRMED") return;
+    if (orderClaim.count !== 1) {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: { not: "CONFIRMED" } },
+        data: { status: "UNDER_REVIEW" },
+      });
+      return false;
+    }
 
-    await tx.payment.update({
-      where: { id: payment.id },
+    // Claim atómico: apenas um webhook concorrente pode confirmar o pagamento.
+    const claim = await tx.payment.updateMany({
+      where: { id: payment.id, status: { not: "CONFIRMED" } },
       data: {
         status: "CONFIRMED",
         confirmedAt: new Date(),
         providerRawPayload: rawPayload as never,
       },
     });
+    if (claim.count !== 1) {
+      throw new ConflictError("Pagamento já processado por outra operação.");
+    }
 
     // Opção B: tentativa ativa vira COMPLETED; as restantes ficam BLOCKED
     await tx.paymentAttempt.updateMany({
@@ -210,18 +240,14 @@ export async function confirmPayment(
       data: { finishedAt: new Date() },
     });
 
-    await tx.order.update({
-      where: { id: payment.orderId },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
-    });
-
     // Consome o hold: reservado → vendido (transacional)
-    const hold = await tx.inventoryHold.findUnique({
-      where: { id: payment.order.holdId ?? "" },
-      select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
-    });
-    if (hold) {
-      if (hold.status === "CONFIRMED") return; // já consumido
+    const hold = payment.order.holdId
+      ? await tx.inventoryHold.findUnique({
+          where: { id: payment.order.holdId },
+          select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
+        })
+      : null;
+    if (hold && hold.status !== "CONFIRMED") {
       await tx.inventoryHold.update({
         where: { id: hold.id },
         data: { status: "CONFIRMED", releasedAt: new Date() },
@@ -248,7 +274,10 @@ export async function confirmPayment(
         }
       }
     }
+    return true;
   });
+
+  if (!didConfirm) return; // outro webhook já concluiu esta confirmação
 
   // Emissão de bilhetes (idempotente) — módulo de acesso
   const { issueTicketsForOrder } = await import("@/modules/access/service");
@@ -269,7 +298,7 @@ export async function handleWebhook(
   headers: Record<string, string>
 ): Promise<{ processed: boolean }> {
   const provider = await prisma.paymentProvider.findUnique({ where: { code: providerCode } });
-  if (!provider) throw new NotFoundError("Prestador");
+  if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(providerCode);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador não instalado.");
 
@@ -287,9 +316,11 @@ export async function handleWebhook(
       providerRef: payload.providerRef,
       provider: { code: providerCode },
     },
-    select: { id: true, amountCents: true, orderId: true },
+    select: { id: true, amountCents: true, orderId: true, status: true },
   });
   if (!payment) return { processed: false }; // ignora transações desconhecidas
+  // Um webhook atrasado não pode rebaixar um pagamento já confirmado.
+  if (payment.status === "CONFIRMED") return { processed: true };
 
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
@@ -349,11 +380,35 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
   }
 
   if (input.decision === "CONFIRM") {
-    // Opção C: ninguém marca como paga sem evidência (notas obrigatórias)
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    // A confirmação manual percorre o mesmo fluxo transacional da confirmação
+    // do prestador: pagamento, encomenda, inventário e bilhetes.
+    const provider = await prisma.paymentProvider.findUnique({
+      where: { id: payment.providerId },
+      select: { code: true },
     });
+    if (!provider) throw new NotFoundError("Prestador");
+
+    const manualProviderRef = payment.providerRef ?? `manual_${payment.id}`;
+    if (!payment.providerRef) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { providerRef: manualProviderRef },
+      });
+    }
+    await confirmPayment(
+      manualProviderRef,
+      { source: "manual-review", evidenceNotes: input.evidenceNotes },
+      provider.code
+    );
+    const confirmedPayment = await prisma.payment.findUnique({
+      where: { id: payment.id },
+      select: { status: true },
+    });
+    if (confirmedPayment?.status !== "CONFIRMED") {
+      throw new BusinessRuleError(
+        "A encomenda já não pode ser confirmada automaticamente; o caso permanece em revisão financeira."
+      );
+    }
     await writeAudit({
       organizationId: ctx.organizationId,
       actorUserId: ctx.userId,
@@ -364,8 +419,6 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
         evidence: input.evidenceNotes,
       }),
     });
-    const { issueTicketsForOrder } = await import("@/modules/access/service");
-    await issueTicketsForOrder(payment.orderId);
   } else {
     await prisma.payment.update({
       where: { id: payment.id },
