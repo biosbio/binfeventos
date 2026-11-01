@@ -95,7 +95,7 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
           ticketTypeId: attendee.ticketTypeId,
           orderAttendeeId: attendee.id,
           holderUserId: order.buyerUserId,
-          holderEmail: attendee.email,
+          holderEmail: attendee.email ?? order.buyerEmail,
           holderName: attendee.fullName,
           ticketNumber: nextTicketNumber(),
           status: "ISSUED",
