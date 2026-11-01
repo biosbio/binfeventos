@@ -27,8 +27,8 @@ function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T 
 }
 
 /** Rotas de catálogo/checkout do marketplace. */
-export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string[] }> }) {
-  const { action } = await ctx.params;
+export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action = [] } = await ctx.params;
   const path = action.join("/");
 
   try {
