@@ -60,6 +60,11 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     throw new AppError("ACCOUNT_SUSPENDED", 403, "Conta suspensa ou encerrada.");
   }
 
+  // Administrador da plataforma nunca pode autenticar sem MFA ativo.
+  if (user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled) {
+    throw new AppError("MFA_MISCONFIGURED", 500, "MFA obrigatório do administrador não está ativo. Contacte o suporte.");
+  }
+
   // MFA: só entra com código TOTP válido (SEC-01)
   if (user.mfaEnabled) {
     if (!user.mfaSecret) {
