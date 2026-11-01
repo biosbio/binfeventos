@@ -132,6 +132,17 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     let current = await tx.payment.findFirst({
       where: { orderId: order.id, providerId: provider.id },
     });
+    const otherActivePayment = await tx.payment.findFirst({
+      where: {
+        orderId: order.id,
+        status: { in: ["INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+        ...(current ? { id: { not: current.id } } : {}),
+      },
+      select: { id: true },
+    });
+    if (otherActivePayment) {
+      throw new ConflictError("Já existe um pagamento ativo para esta encomenda noutro prestador.");
+    }
     if (!current) {
       current = await tx.payment.create({
         data: {
