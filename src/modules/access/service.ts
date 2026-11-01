@@ -344,7 +344,7 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
       throw new ConflictError("Titular ou estado do pedido foi alterado.");
     }
     if (!fresh.newHolderEmail) throw new BusinessRuleError("Pedido sem email do novo titular.");
-    const newHolderEmail = newHolderEmail;
+    const newHolderEmail = fresh.newHolderEmail.toLowerCase();
 
     const recipient = await tx.user.findUnique({
       where: { email: newHolderEmail },
