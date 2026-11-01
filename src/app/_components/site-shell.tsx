@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { getAuthContext } from "@/shared/auth";
 
-export function SiteHeader() {
+export async function SiteHeader() {
+  const auth = await getAuthContext();
+  const isAdmin = Boolean(auth?.permissions.has("admin:platform") || auth?.permissions.has("org:manage"));
+
   return (
     <header className="site-header">
       <Link className="brand" href="/" aria-label="BINF EVENTOS — início">
@@ -10,14 +14,23 @@ export function SiteHeader() {
       <nav className="nav" aria-label="Navegação principal">
         <Link href="/#eventos">Eventos</Link>
         <Link href="/#como-funciona">Como funciona</Link>
-        <Link href="/painel">Painel</Link>
-        <Link href="/painel/eventos/novo">Criar evento</Link>
-        <Link href="/financas">Finanças</Link>
-        <Link href="/portaria">Portaria</Link>
+        <Link href="/organizador">Para organizadores</Link>
+        {auth ? <Link href="/painel">{isAdmin ? "Administração" : "Meu painel"}</Link> : null}
       </nav>
       <div className="nav-actions">
-        <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
-        <Link className="button button-primary" href="/login">Entrar</Link>
+        {auth ? (
+          <>
+            <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
+            <form action="/api/users/logout" method="post">
+              <button className="button button-primary" type="submit">Sair</button>
+            </form>
+          </>
+        ) : (
+          <>
+            <Link className="button button-secondary" href="/register">Criar conta</Link>
+            <Link className="button button-primary" href="/login">Entrar</Link>
+          </>
+        )}
       </div>
     </header>
   );
