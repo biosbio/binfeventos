@@ -175,11 +175,20 @@ export async function createOrder(
       });
     }
 
-    // Hold passa a pendente de pagamento (inventário segue protegido)
-    await tx.inventoryHold.update({
-      where: { id: hold.id },
+    // Claim atómico do hold: duas compras concorrentes não podem
+    // converter a mesma reserva em duas encomendas.
+    const consumedHold = await tx.inventoryHold.updateMany({
+      where: {
+        id: hold.id,
+        organizationId,
+        status: "RESERVED",
+        expiresAt: { gt: new Date() },
+      },
       data: { status: "PENDING_PAYMENT" },
     });
+    if (consumedHold.count !== 1) {
+      throw new ConflictError("Reserva já consumida ou expirada. Recomece a compra.");
+    }
 
     return created;
   });
@@ -223,10 +232,19 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: order.id },
+    // A transição condicional impede cancelar uma encomenda que foi
+    // confirmada em paralelo por um webhook de pagamento.
+    const cancelled = await tx.order.updateMany({
+      where: {
+        id: order.id,
+        organizationId: ctx.organizationId,
+        status: { in: ["DRAFT", "RESERVED", "PENDING_PAYMENT"] },
+      },
       data: { status: "CANCELLED", cancelledAt: new Date() },
     });
+    if (cancelled.count !== 1) {
+      throw new ConflictError("A encomenda mudou de estado e já não pode ser cancelada.");
+    }
 
     if (order.holdId) {
       const hold = await tx.inventoryHold.findUnique({
