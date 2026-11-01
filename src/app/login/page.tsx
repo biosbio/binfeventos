@@ -17,19 +17,33 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
+    // FormData lê os valores reais dos controlos, incluindo autofill
+    // do navegador que pode não disparar onChange no React.
+    const formData = new FormData(e.currentTarget);
+    const submittedEmail = String(formData.get("email") ?? "").trim();
+    const submittedPassword = String(formData.get("password") ?? "");
+    const submittedTotp = String(formData.get("totpCode") ?? "").replace(/\D/g, "");
+
     try {
       const res = await fetch("/api/users/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, ...(totpCode ? { totpCode } : {}) }),
+        body: JSON.stringify({
+          email: submittedEmail,
+          password: submittedPassword,
+          ...(submittedTotp ? { totpCode: submittedTotp } : {}),
+        }),
       });
       const data = (await res.json()) as { code?: string; message?: string };
       if (!res.ok) {
-        if (data.message?.includes("MFA")) setNeedsMfa(true);
+        if (data.code === "MFA_REQUIRED" || data.message?.includes("MFA")) {
+          setNeedsMfa(true);
+        }
         setError(data.message ?? "Não foi possível entrar.");
         return;
       }
@@ -57,8 +71,9 @@ export default function LoginPage() {
             <label htmlFor="email">Email</label>
             <input
               id="email"
+              name="email"
               type="email"
-              autoComplete="email"
+              autoComplete="username"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -69,6 +84,7 @@ export default function LoginPage() {
             <label htmlFor="password">Password</label>
             <input
               id="password"
+              name="password"
               type="password"
               autoComplete="current-password"
               required
@@ -86,8 +102,10 @@ export default function LoginPage() {
               <label htmlFor="totp">Código MFA (6 dígitos)</label>
               <input
                 id="totp"
+                name="totpCode"
                 inputMode="numeric"
-                pattern="\d{6}"
+                autoComplete="one-time-code"
+                pattern="\\d{6}"
                 maxLength={6}
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
