@@ -159,8 +159,8 @@ export async function completeRefund(
   if (refund.status !== "APPROVED" && refund.status !== "PROCESSING") {
     throw new ConflictError("Apenas reembolsos aprovados podem ser concluídos.");
   }
-  const orderId = orderId;
-  const paymentId = paymentId;
+  const orderId = refund.orderId;
+  const paymentId = refund.paymentId;
   if (!orderId || !paymentId) {
     throw new BusinessRuleError("Reembolso sem encomenda ou pagamento associado.");
   }
