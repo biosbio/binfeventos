@@ -251,7 +251,7 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
   if (
     existing &&
     existing.userId === ctx.userId &&
-    existing.organizationId === ctx.organizationId &&
+    existing.organizationId === organizationId &&
     existing.status === "RESERVED" &&
     existing.expiresAt > new Date()
   ) {
