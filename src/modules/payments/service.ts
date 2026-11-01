@@ -461,7 +461,73 @@ export async function handleWebhook(
     },
     select: { id: true, amountCents: true, orderId: true, status: true },
   });
-  if (!payment) return { processed: false }; // ignora transações desconhecidas
+  if (!payment) {
+    // Tentativa antiga/bloqueada: nunca emitir bilhetes automaticamente, mas
+    // não ignorar uma eventual captura tardia que possa exigir reembolso.
+    const staleAttempt = await prisma.paymentAttempt.findFirst({
+      where: {
+        providerRef: payload.providerRef,
+        payment: { provider: { code: providerCode } },
+      },
+      include: {
+        payment: {
+          include: {
+            order: { select: { id: true, status: true, holdId: true } },
+          },
+        },
+      },
+    });
+    if (!staleAttempt) return { processed: false };
+    if (["BLOCKED", "FAILED"].includes(staleAttempt.status)) {
+      if (
+        payload.status === "CONFIRMED" ||
+        payload.status === "UNKNOWN" ||
+        payload.amountCents !== staleAttempt.payment.amountCents
+      ) {
+        await prisma.$transaction(async (tx) => {
+          await tx.paymentAttempt.updateMany({
+            where: { id: staleAttempt.id, status: staleAttempt.status },
+            data: { notes: `Callback tardio de tentativa bloqueada: ${payload.status}.` },
+          });
+          await tx.paymentAttempt.updateMany({
+            where: { paymentId: staleAttempt.paymentId, status: "ACTIVE" },
+            data: { status: "BLOCKED", finishedAt: new Date() },
+          });
+          await tx.payment.updateMany({
+            where: {
+              id: staleAttempt.paymentId,
+              status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
+            },
+            data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
+          });
+          if (
+            staleAttempt.payment.order.holdId &&
+            ["RESERVED", "PENDING_PAYMENT"].includes(staleAttempt.payment.order.status)
+          ) {
+            await markHoldVerifying(staleAttempt.payment.order.holdId);
+          }
+        });
+        await writeAudit({
+          organizationId: staleAttempt.payment.organizationId,
+          actorUserId: null,
+          action: "payment.blocked_attempt_callback",
+          after: sanitizeForAudit({
+            paymentId: staleAttempt.paymentId,
+            attemptId: staleAttempt.id,
+            providerRef: payload.providerRef,
+            providerStatus: payload.status,
+          }),
+        });
+      } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
+        await prisma.paymentAttempt.updateMany({
+          where: { id: staleAttempt.id, status: staleAttempt.status },
+          data: { status: "FAILED", finishedAt: new Date() },
+        });
+      }
+      return { processed: true };
+    }
+    return { processed: false };
+  }
   // Um webhook atrasado não pode rebaixar um pagamento já confirmado.
   if (payment.status === "CONFIRMED") return { processed: true };
 
