@@ -62,7 +62,7 @@ function codeDigest(code: string): string {
 /** Envia um OTP para um organizador já associado a uma organização ativa. */
 export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" | "SMS"): Promise<void> {
   if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
-  if (!ctx.organizationId || !ctx.permissions.has("event:read")) {
+  if (!ctx.organizationId || ctx.permissions.size === 0) {
     throw new ForbiddenError("organizer-membership-required");
   }
   if (rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
@@ -127,10 +127,11 @@ export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): 
   if (!safeEqual(record.codeHash, codeDigest(code))) {
     throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido.");
   }
-  await prisma.panelVerificationCode.update({
-    where: { id: record.id },
+  const consumed = await prisma.panelVerificationCode.updateMany({
+    where: { id: record.id, consumedAt: null, codeHash: codeDigest(code), attempts: { lte: MAX_ATTEMPTS } },
     data: { consumedAt: new Date() },
   });
+  if (consumed.count !== 1) throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido ou já utilizado.");
   await markPanelVerified(ctx.sessionId);
 }
 
