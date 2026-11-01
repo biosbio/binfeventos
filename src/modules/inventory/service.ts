@@ -407,6 +407,13 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
   await prisma.$transaction(async (tx) => {
     const h = await tx.inventoryHold.findUnique({ where: { id: holdId } });
     if (!h) throw new NotFoundError("Reserva");
+    const linkedOrder = await tx.order.findFirst({
+      where: { holdId: h.id, status: { not: "CANCELLED" } },
+      select: { id: true },
+    });
+    if (linkedOrder) {
+      throw new BusinessRuleError("A reserva já pertence a uma encomenda. Cancele a encomenda para libertar o inventário.");
+    }
     const isBuyer = h.userId === ctx.userId;
     const isOrgOperator =
       ctx.organizationId === h.organizationId && ctx.permissions.has("order:cancel");
