@@ -1,4 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from "crypto";
+import { prisma } from "@/shared/lib/prisma";
 
 // ============================================================
 // Utilitários de segurança (SEC-01, SEC-03, SEC-18)
@@ -48,17 +49,30 @@ export function generateIdempotencyKey(): string {
   return randomBytes(16).toString("hex");
 }
 
-/** Rate limiting em memória (SEC-05) — substituível por Redis em produção.
- *  Uso: `if (rateLimit(key, 10, 60_000)) → bloqueado` */
-const rateBuckets = new Map<string, { count: number; resetAt: number }>();
-
-export function rateLimit(key: string, max: number, windowMs: number): boolean {
-  const now = Date.now();
-  const bucket = rateBuckets.get(key);
-  if (!bucket || bucket.resetAt < now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-  bucket.count += 1;
-  return bucket.count > max;
+/** Rate limiting persistente no PostgreSQL (partilhado entre instâncias). */
+export async function rateLimit(
+  key: string,
+  max: number,
+  windowMs: number
+): Promise<boolean> {
+  const now = new Date();
+  const resetAt = new Date(now.getTime() + windowMs);
+  // A chave persistida é hash para não guardar IP/email em claro.
+  const bucketKey = sha256(key);
+  const rows = await prisma.$queryRaw<{ count: number }[]>`
+    INSERT INTO "rate_limit_buckets" ("key", "count", "resetAt", "updatedAt")
+    VALUES (${bucketKey}, 1, ${resetAt}, ${now})
+    ON CONFLICT ("key") DO UPDATE SET
+      "count" = CASE
+        WHEN "rate_limit_buckets"."resetAt" <= NOW() THEN 1
+        ELSE "rate_limit_buckets"."count" + 1
+      END,
+      "resetAt" = CASE
+        WHEN "rate_limit_buckets"."resetAt" <= NOW() THEN EXCLUDED."resetAt"
+        ELSE "rate_limit_buckets"."resetAt"
+      END,
+      "updatedAt" = NOW()
+    RETURNING "count"
+  `;
+  return (rows[0]?.count ?? max + 1) > max;
 }
