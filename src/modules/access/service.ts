@@ -144,14 +144,20 @@ export async function getQrToken(ctx: AuthContext, ticketId: string): Promise<st
 
 /** Solicitar transferência (titular atual; elegibilidade verificada). */
 export async function requestTransfer(ctx: AuthContext, input: IssueTransferInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const ticket = await prisma.ticket.findUnique({
     where: { id: input.ticketId },
     include: { order: { select: { buyerUserId: true } }, session: { select: { startsAt: true } } },
   });
-  if (!ticket || ticket.organizationId !== ctx.organizationId) throw new NotFoundError("Bilhete");
-  if (ticket.order.buyerUserId !== ctx.userId && !ctx.permissions.has("transfer:approve")) {
-    throw new ForbiddenError("not-ticket-holder");
+  if (!ticket) throw new NotFoundError("Bilhete");
+  const isBuyer = ticket.order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === ticket.organizationId && ctx.permissions.has("transfer:approve");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-ticket-holder");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   // Elegibilidade: bilhete emitido e sessão ainda não realizada
   if (ticket.status !== "ISSUED") {
