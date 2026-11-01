@@ -127,6 +127,9 @@ export async function beginEnableMfa(userId: string): Promise<{
 
 /** Confirma ativação de MFA com o primeiro código válido. */
 export async function confirmEnableMfa(userId: string, totpCode: string): Promise<void> {
+  if (await rateLimit(`mfa-enable:${userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { mfaSecret: true, mfaEnabled: true },
@@ -142,6 +145,9 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
 
 /** Desativa MFA (exige código válido — não pode ser desligado sem prova). */
 export async function disableMfa(userId: string, totpCode: string): Promise<void> {
+  if (await rateLimit(`mfa-disable:${userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
