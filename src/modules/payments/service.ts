@@ -332,7 +332,6 @@ export async function confirmPayment(
     console.error("[webhook] payment-not-found", { providerRef });
     return;
   }
-  if (payment.status === "CONFIRMED") return;
   const matchingAttempt = await prisma.paymentAttempt.findFirst({
     where: { paymentId: payment.id, providerRef },
     select: { id: true, status: true },
@@ -360,6 +359,7 @@ export async function confirmPayment(
     });
     return;
   }
+  if (payment.status === "CONFIRMED") return;
 
   const didConfirm = await prisma.$transaction(async (tx) => {
     // Não confirmar pagamento se o hold foi libertado/expirado.
@@ -572,8 +572,11 @@ export async function handleWebhook(
     }
     return { processed: false };
   }
-  // Um webhook atrasado não pode rebaixar um pagamento já confirmado.
-  if (payment.status === "CONFIRMED") return { processed: true };
+  // Um webhook não confirmado não pode rebaixar um pagamento já confirmado.
+  // Confirmações de tentativas bloqueadas seguem para auditoria/revisão abaixo.
+  if (payment.status === "CONFIRMED" && payload.status !== "CONFIRMED") {
+    return { processed: true };
+  }
 
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
