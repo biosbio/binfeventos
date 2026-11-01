@@ -145,7 +145,7 @@ export async function decideSettlement(
   ctx: AuthContext,
   input: { settlementId: string; decision: "APPROVE" | "REJECT" }
 ) {
-  const organizationId = organizationId;
+  const organizationId = ctx.organizationId;
   if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("settlement:approve")) throw new ForbiddenError("settlement:approve");
 
@@ -283,7 +283,7 @@ export async function createReserve(
 
 /** Libertar reserva (com lançamento compensatório no razão). */
 export async function releaseReserve(ctx: AuthContext, reserveId: string, notes: string) {
-  const organizationId = organizationId;
+  const organizationId = ctx.organizationId;
   if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("reserve:manage")) throw new ForbiddenError("reserve:manage");
 
