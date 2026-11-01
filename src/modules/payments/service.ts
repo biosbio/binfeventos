@@ -87,12 +87,13 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
   const existingAttempt = await prisma.paymentAttempt.findUnique({
     where: { idempotencyKey: attemptKey },
-    include: { payment: { select: { id: true, orderId: true, organizationId: true } } },
+    include: { payment: { select: { id: true, orderId: true, organizationId: true, providerId: true } } },
   });
   if (existingAttempt) {
     if (
       existingAttempt.payment.orderId !== order.id ||
-      existingAttempt.payment.organizationId !== order.organizationId
+      existingAttempt.payment.organizationId !== order.organizationId ||
+      existingAttempt.payment.providerId !== provider.id
     ) {
       throw new ConflictError("Chave de idempotência de pagamento já utilizada.");
     }
