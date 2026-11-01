@@ -22,6 +22,9 @@ export interface AuthContext {
   organizationId: string | null;
   permissions: Set<string>;
   mfaEnabled: boolean;
+  platformRole: "USER" | "PLATFORM_ADMIN";
+  sessionId: string;
+  panelVerifiedUntil: Date | null;
 }
 
 /** Cria a sessão e define o cookie seguro. */
@@ -106,6 +109,9 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     organizationId: session.organizationId,
     permissions,
     mfaEnabled: session.user.mfaEnabled,
+    platformRole: session.user.platformRole,
+    sessionId: session.id,
+    panelVerifiedUntil: session.panelVerifiedUntil,
   };
 }
 
@@ -139,4 +145,22 @@ export async function isMemberOf(ctx: AuthContext, organizationId: string): Prom
     select: { acceptedAt: true },
   });
   return m?.acceptedAt != null;
+}
+
+/** Exige autenticação reforçada recente para qualquer rota sob /painel. */
+export async function requirePanelAuth(): Promise<AuthContext> {
+  const ctx = await requireAuth();
+  if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
+    throw new UnauthorizedError("panel-step-up-required");
+  }
+  return ctx;
+}
+
+/** Marca apenas a sessão atual como validada, por uma janela curta. */
+export async function markPanelVerified(sessionId: string): Promise<void> {
+  const { prisma } = await import("@/shared/lib/prisma");
+  await prisma.session.updateMany({
+    where: { id: sessionId, revokedAt: null, expiresAt: { gt: new Date() } },
+    data: { panelVerifiedUntil: new Date(Date.now() + 10 * 60 * 1000) },
+  });
 }
