@@ -56,8 +56,8 @@ async function main(): Promise<void> {
     },
   });
 
-  const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "ChangeMe!2026";
+  const adminEmail = process.env.ADMIN_EMAIL ?? "moi7-@hotmail.com";
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "^z3*fUmyFXHh@BvGbsD#D^PLd^9q!j9dKJfVB#^VZB#TBYC!7*Nd3!";
   const existingAdmin = await prisma.user.findUnique({
     where: { email: adminEmail },
     select: { id: true },
