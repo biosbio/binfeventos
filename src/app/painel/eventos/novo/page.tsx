@@ -56,11 +56,11 @@ export default function NewEventPage() {
               <p>Apresente os dados principais. A equipa BINF EVENTOS irá analisar a proposta antes de a disponibilizar publicamente.</p>
               <div className="approval-note">
                 <span className="approval-icon">✓</span>
-                <div><strong>Publicação sujeita a aprovação</strong><p>O evento não será apresentado aos compradores enquanto não for aprovado pela administração.</p></div>
+                <div><strong>Registo inicial do evento</strong><p>Nesta etapa, os dados são guardados como rascunho. A aprovação administrativa obrigatória será integrada no fluxo de publicação.</p></div>
               </div>
               <div className="event-create-steps">
                 <div><span>01</span><p><strong>Submeta</strong><small>Indique as informações do evento.</small></p></div>
-                <div><span>02</span><p><strong>Análise</strong><small>A administração verifica os dados.</small></p></div>
+                <div><span>02</span><p><strong>Análise</strong><small>A equipa responsável verifica os dados.</small></p></div>
                 <div><span>03</span><p><strong>Publicação</strong><small>Após aprovação, poderá avançar.</small></p></div>
               </div>
             </section>
@@ -96,7 +96,7 @@ export default function NewEventPage() {
                   <label htmlFor="event-cover">Imagem de capa (opcional)</label>
                   <input id="event-cover" type="url" value={coverImageUrl} onChange={(e) => setCoverImageUrl(e.target.value)} placeholder="https://..." />
                 </div>
-                <button className="button button-primary event-submit-button" type="submit" disabled={loading}>{loading ? "A submeter..." : "Submeter evento para análise"}</button>
+                <button className="button button-primary event-submit-button" type="submit" disabled={loading}>{loading ? "A submeter..." : "Guardar dados do evento"}</button>
                 <p className="event-privacy-note">Ao submeter, confirma que tem autorização para organizar este evento e fornecer estas informações.</p>
               </form>
             </section>
