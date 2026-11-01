@@ -67,12 +67,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const eventId = parse(UUID, action[0]);
       const body = parse(transitionSchema, await req.json());
 
-      // A publicação pública é uma decisão da plataforma, não do organizador.
-      // requirePermission também exige a autenticação reforçada do painel.
-      if (body.to === "PUBLISHED") {
+      // O administrador central gere todas as decisões de estado de qualquer
+      // organização; o step-up TOTP é sempre exigido no painel administrativo.
+      const current = await requireAuth();
+      if (current.platformRole === "PLATFORM_ADMIN") {
         const auth = await requirePermission("admin:platform");
         const { transitionEvent } = await import("@/modules/events/service");
         return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
+      }
+      // A publicação pública nunca pode ser executada pelo organizador.
+      if (body.to === "PUBLISHED") {
+        throw new ForbiddenError("admin-publication-approval-required");
       }
       if (["SUSPENDED", "SOLD_OUT"].includes(body.to)) {
         const auth = await requirePermission("event:publish");
