@@ -350,6 +350,7 @@ export async function confirmPayment(
     const paymentClaim = await tx.payment.updateMany({
       where: {
         id: payment.id,
+        providerRef,
         status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
       },
       data: {
