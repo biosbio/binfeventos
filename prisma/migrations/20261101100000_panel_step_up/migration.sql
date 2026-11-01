@@ -27,9 +27,3 @@ ALTER TABLE "panel_verification_codes"
   ADD CONSTRAINT "panel_verification_codes_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "users"("id")
   ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- Promote the configured bootstrap administrator only; do not grant privileges
--- to any other user based on organization membership.
-UPDATE "users"
-SET "platformRole" = 'PLATFORM_ADMIN'
-WHERE lower("email") = lower(COALESCE(NULLIF(current_setting('app.admin_email', true), ''), 'admin@binf.local'));
