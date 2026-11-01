@@ -53,6 +53,9 @@ export function decryptMfaSecret(value: string): string {
   const parts = value.split(":");
   if (parts.length !== 5) throw new Error("Formato de segredo MFA inválido.");
   const [, version, ivEncoded, tagEncoded, ciphertextEncoded] = parts;
+  if (!version || !ivEncoded || !tagEncoded || !ciphertextEncoded) {
+    throw new Error("Componentes de segredo MFA incompletos.");
+  }
   if (version !== "v1") throw new Error("Versão de segredo MFA não suportada.");
   const decipher = createDecipheriv(
     "aes-256-gcm",
