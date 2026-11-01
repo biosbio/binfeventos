@@ -266,7 +266,7 @@ export async function handleWebhook(
   headers: Record<string, string>
 ): Promise<{ processed: boolean }> {
   const provider = await prisma.paymentProvider.findUnique({ where: { code: providerCode } });
-  if (!provider) throw new NotFoundError("Prestador");
+  if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(providerCode);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador não instalado.");
 
