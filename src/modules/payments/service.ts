@@ -63,11 +63,12 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (order.holdId) {
     const hold = await prisma.inventoryHold.findUnique({
       where: { id: order.holdId },
-      select: { status: true, organizationId: true },
+      select: { status: true, organizationId: true, expiresAt: true },
     });
     if (
       !hold ||
       hold.organizationId !== order.organizationId ||
+      hold.expiresAt <= new Date() ||
       !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(hold.status)
     ) {
       throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
@@ -118,11 +119,12 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     if (freshOrder.holdId) {
       const freshHold = await tx.inventoryHold.findUnique({
         where: { id: freshOrder.holdId },
-        select: { status: true, organizationId: true },
+        select: { status: true, organizationId: true, expiresAt: true },
       });
       if (
         !freshHold ||
         freshHold.organizationId !== order.organizationId ||
+        freshHold.expiresAt <= new Date() ||
         !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(freshHold.status)
       ) {
         throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
