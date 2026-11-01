@@ -63,6 +63,13 @@ export async function issueTicketsForOrder(orderId: string): Promise<{
     if (!order.sessionId || !order.session) {
       throw new BusinessRuleError("Encomenda sem sessão válida; emissão bloqueada.");
     }
+    // Uma transferência concluída implica que a emissão original já existia.
+    // Evita recriar bilhetes para titulares antigos deixados por versões anteriores.
+    const completedTransfer = await tx.ticketTransferRequest.findFirst({
+      where: { status: "COMPLETED", ticket: { orderId } },
+      select: { id: true },
+    });
+    if (completedTransfer) return { tickets: [] };
 
     const alreadyIssued = await tx.ticket.findMany({
       where: { orderId },
