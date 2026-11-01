@@ -93,7 +93,7 @@ export default function RegisterPage() {
               maxLength={16}
               pattern="[+][1-9][0-9]{7,14}"
               autoComplete="tel"
-              placeholder="+245 9XXXXXXXX"
+              placeholder="+2459XXXXXXXX"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />
