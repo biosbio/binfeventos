@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
+import { z } from "zod";
 
 // ============================================================
 // Módulo organizations — rotas API
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
 
     if (path === "members/accept") {
       const auth = await requireAuth();
-      const body = await req.json<{ organizationId: string }>();
+      const body = parseBody(z.object({ organizationId: z.string().uuid() }), await req.json());
       const { acceptInvitation } = await import("@/modules/organizations/service");
       await acceptInvitation(auth, body.organizationId);
       return NextResponse.json({ ok: true });
