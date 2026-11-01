@@ -145,11 +145,12 @@ export async function decideSettlement(
   ctx: AuthContext,
   input: { settlementId: string; decision: "APPROVE" | "REJECT" }
 ) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("settlement:approve")) throw new ForbiddenError("settlement:approve");
 
   const settlement = await prisma.settlement.findUnique({ where: { id: input.settlementId } });
-  if (!settlement || settlement.organizationId !== ctx.organizationId) {
+  if (!settlement || settlement.organizationId !== organizationId) {
     throw new NotFoundError("Liquidação");
   }
   // DUPLA APROVAÇÃO
@@ -162,7 +163,7 @@ export async function decideSettlement(
 
   if (input.decision === "REJECT") {
     const changed = await prisma.settlement.updateMany({
-      where: { id: settlement.id, organizationId: ctx.organizationId, status: "PENDING" },
+      where: { id: settlement.id, organizationId: organizationId, status: "PENDING" },
       data: { status: "CANCELLED", approvedByUserId: ctx.userId },
     });
     if (changed.count !== 1) throw new ConflictError("Liquidação já foi processada.");
@@ -171,7 +172,7 @@ export async function decideSettlement(
 
   await prisma.$transaction(async (tx) => {
     const changed = await tx.settlement.updateMany({
-      where: { id: settlement.id, organizationId: ctx.organizationId, status: "PENDING" },
+      where: { id: settlement.id, organizationId: organizationId, status: "PENDING" },
       data: { status: "APPROVED", approvedByUserId: ctx.userId },
     });
     if (changed.count !== 1) throw new ConflictError("Liquidação já foi processada.");
@@ -190,7 +191,7 @@ export async function decideSettlement(
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: organizationId,
     actorUserId: ctx.userId,
     action: "settlement.approved",
     after: sanitizeForAudit({ settlementId: settlement.id, payableCents: settlement.payableCents }),
