@@ -125,6 +125,12 @@ export async function transitionEvent(
   eventId: string,
   to: EventStatus
 ) {
+  if (
+    ctx.platformRole === "PLATFORM_ADMIN" &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
   const event = await scopedEvent(ctx, eventId);
   const from = event.status;
 
