@@ -417,8 +417,19 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       select: { status: true },
     });
     if (confirmedPayment?.status !== "CONFIRMED") {
+      await writeAudit({
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.userId,
+        action: "payment.reviewed_late_confirmation",
+        after: sanitizeForAudit({
+          paymentId: payment.id,
+          decision: "CONFIRM",
+          outcome: confirmedPayment?.status ?? "UNKNOWN",
+          evidence: input.evidenceNotes,
+        }),
+      });
       throw new BusinessRuleError(
-        "A encomenda já não pode ser confirmada automaticamente; o caso permanece em revisão financeira."
+        "A encomenda já não pode ser confirmada automaticamente; o pagamento permanece em revisão financeira."
       );
     }
     await writeAudit({
