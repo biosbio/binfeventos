@@ -53,6 +53,9 @@ export default async function MyAccountPage() {
         <p className="section-copy" style={{ maxWidth: "none" }}>
           As suas encomendas e bilhetes digitais. {user.mfaEnabled ? "MFA ativado ✓" : "MFA desativado — ative na segurança da conta."}
         </p>
+        <div className="account-security-link">
+          <Link className="button button-secondary" href="/minha-conta/seguranca">Alterar password e segurança</Link>
+        </div>
 
         {orders.length === 0 ? (
           <div className="empty-state" style={{ marginTop: 30 }}>
