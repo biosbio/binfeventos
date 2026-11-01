@@ -391,23 +391,25 @@ model TicketInventory {
 }
 
 model InventoryHold {
-  id           String     @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  sessionId    String     @db.Uuid
-  ticketTypeId String     @db.Uuid
-  batchId      String     @db.Uuid
-  status       HoldStatus @default(RESERVED)
-  quantity     Int
-  idempotencyKey String?  @unique
-  expiresAt    DateTime
-  releasedAt   DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  userId         String?    @db.Uuid
+  sessionId      String     @db.Uuid
+  ticketTypeId   String     @db.Uuid
+  batchId        String     @db.Uuid
+  status         HoldStatus @default(RESERVED)
+  quantity       Int
+  idempotencyKey String?    @unique
+  expiresAt      DateTime
+  releasedAt     DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   session    EventSession @relation(fields: [sessionId], references: [id])
   ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
 
   @@index([sessionId, status])
+  @@index([userId, status])
   @@index([expiresAt])
   @@map("inventory_holds")
 }
