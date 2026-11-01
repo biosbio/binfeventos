@@ -202,6 +202,26 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   const attached = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${paymentId}::uuid FOR UPDATE`;
     const attemptNumber = (await tx.paymentAttempt.count({ where: { paymentId } })) + 1;
+    const freshPayment = await tx.payment.findUnique({
+      where: { id: paymentId },
+      select: { status: true },
+    });
+    if (!freshPayment || freshPayment.status !== "INITIATED") {
+      // Outra confirmação/revisão ganhou a corrida enquanto o prestador respondia.
+      // Regista esta tentativa como bloqueada; um callback posterior vai para revisão.
+      await tx.paymentAttempt.create({
+        data: {
+          paymentId,
+          attemptNumber,
+          status: "BLOCKED",
+          finishedAt: new Date(),
+          idempotencyKey: attemptKey,
+          providerRef: result.providerRef,
+          notes: "Resposta recebida após alteração concorrente do estado do pagamento.",
+        },
+      });
+      return false;
+    }
     await tx.paymentAttempt.updateMany({
       where: { paymentId, status: "ACTIVE" },
       data: { status: "BLOCKED", finishedAt: new Date() },
@@ -216,14 +236,15 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
         providerRef: result.providerRef,
       },
     });
-    await tx.payment.update({
-      where: { id: paymentId },
+    const paymentUpdated = await tx.payment.updateMany({
+      where: { id: paymentId, status: "INITIATED" },
       data: {
         status: result.status === "CONFIRMED" ? "PROCESSING" : statusFromProvider,
         providerRef: result.providerRef,
         providerRawPayload: result.rawPayload as never,
       },
     });
+    if (paymentUpdated.count !== 1) return false;
 
     const orderClaim = await tx.order.updateMany({
       where: { id: order.id, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
