@@ -236,6 +236,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   const statusFromProvider = PROVIDER_STATUS_MAP[result.status] as never;
   const terminalDecline = ["DECLINED", "CANCELLED", "EXPIRED"].includes(result.status);
   const attached = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
     await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${paymentId}::uuid FOR UPDATE`;
     const attemptNumber = (await tx.paymentAttempt.count({ where: { paymentId } })) + 1;
     const freshPayment = await tx.payment.findUnique({
