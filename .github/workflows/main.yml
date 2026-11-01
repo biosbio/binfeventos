@@ -19,17 +19,30 @@ jobs:
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/binf_test?schema=public
-      SANDBOX_WEBHOOK_SECRET: ci-secret-4f7a
       ADMIN_EMAIL: admin@binf.local
-      ADMIN_PASSWORD: CiAdmin!2026x
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: npm
+      - name: Update npm
+        run: npm install --global npm@11
+      - name: Generate ephemeral CI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SANDBOX_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%+=' | head -c 40)" >> "$GITHUB_ENV"
+          echo "ADMIN_MFA_SECRET=$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')" >> "$GITHUB_ENV"
+          echo "MFA_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: npm ci
+      - run: npm audit --audit-level=moderate
       - run: npx prisma generate
+      - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npm run db:seed
       - run: npm run typecheck
