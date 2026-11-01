@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { errorResponse, ValidationError, ForbiddenError, NotFoundError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
 
@@ -12,10 +13,12 @@ import { requireAuth, requirePermission } from "@/shared/auth";
 //   POST /api/access/gates               — criar porta (gate:manage)
 // ============================================================
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
