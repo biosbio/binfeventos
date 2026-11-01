@@ -3,7 +3,15 @@ import { authenticator } from "otplib";
 import { prisma } from "@/shared/lib/prisma";
 import { markPanelVerified, type AuthContext } from "@/shared/auth";
 import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
-import { verifyPassword, sha256, safeEqual, rateLimit } from "@/shared/lib/security";
+import {
+  verifyPassword,
+  sha256,
+  safeEqual,
+  rateLimit,
+  decryptMfaSecret,
+  encryptMfaSecret,
+  isEncryptedMfaSecret,
+} from "@/shared/lib/security";
 
 const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -65,7 +73,7 @@ export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" 
   if (!ctx.organizationId || ctx.permissions.size === 0) {
     throw new ForbiddenError("organizer-membership-required");
   }
-  if (rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
+  if (await rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Limite de códigos atingido. Aguarde 15 minutos.");
   }
 
@@ -120,10 +128,20 @@ export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): 
     orderBy: { createdAt: "desc" },
   });
   if (!record) throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou inexistente. Solicite outro.");
-  await prisma.panelVerificationCode.update({
-    where: { id: record.id },
+  // Incremento condicional atómico: pedidos concorrentes não ultrapassam
+  // o limite de cinco tentativas.
+  const attempt = await prisma.panelVerificationCode.updateMany({
+    where: {
+      id: record.id,
+      consumedAt: null,
+      expiresAt: { gt: new Date() },
+      attempts: { lt: MAX_ATTEMPTS },
+    },
     data: { attempts: { increment: 1 } },
   });
+  if (attempt.count !== 1) {
+    throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou sem tentativas disponíveis.");
+  }
   if (!safeEqual(record.codeHash, codeDigest(code))) {
     throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido.");
   }
@@ -142,6 +160,12 @@ export async function verifyAdminPanelMfa(
   totpCode: string,
 ): Promise<void> {
   if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("platform-admin-only");
+  if (!process.env.MFA_ENCRYPTION_KEY) {
+    throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
+  }
+  if (await rateLimit(`panel-admin-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de autenticação. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
     select: { passwordHash: true, mfaEnabled: true, mfaSecret: true },
@@ -149,9 +173,18 @@ export async function verifyAdminPanelMfa(
   if (!user || !(await verifyPassword(user.passwordHash, password))) {
     throw new AppError("INVALID_CREDENTIALS", 401, "Credenciais inválidas.");
   }
-  if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(totpCode) ||
-      !authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(totpCode)) {
     throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+  const mfaSecret = decryptMfaSecret(user.mfaSecret);
+  if (!authenticator.verify({ token: totpCode, secret: mfaSecret })) {
+    throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+  if (!isEncryptedMfaSecret(user.mfaSecret) && process.env.MFA_ENCRYPTION_KEY) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { mfaSecret: encryptMfaSecret(mfaSecret) },
+    });
   }
   await markPanelVerified(ctx.sessionId);
 }
