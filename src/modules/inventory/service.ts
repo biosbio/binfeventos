@@ -455,34 +455,80 @@ export async function releaseHold(ctx: AuthContext, holdId: string): Promise<voi
  * Chamar periodicamente (cron/worker) — idempotente.
  */
 export async function releaseExpiredHolds(): Promise<{ released: number }> {
+  const now = new Date();
   const expired = await prisma.inventoryHold.findMany({
-    where: { status: "RESERVED", expiresAt: { lte: new Date() } },
+    where: { status: { in: ["RESERVED", "PENDING_PAYMENT"] }, expiresAt: { lte: now } },
     select: { id: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
     take: 500,
   });
 
   let released = 0;
-  for (const h of expired) {
-    await prisma.$transaction(async (tx) => {
-      // Claim condicional: múltiplos workers nunca libertam a mesma reserva.
+  for (const hold of expired) {
+    const expiredOrderId = await prisma.$transaction(async (tx) => {
+      // O lock do hold serializa a limpeza com a iniciação do pagamento.
+      await tx.$queryRaw`SELECT "id" FROM "inventory_holds" WHERE "id" = ${hold.id}::uuid FOR UPDATE`;
+      const freshHold = await tx.inventoryHold.findUnique({
+        where: { id: hold.id },
+        select: { status: true, expiresAt: true },
+      });
+      if (
+        !freshHold ||
+        !["RESERVED", "PENDING_PAYMENT"].includes(freshHold.status) ||
+        freshHold.expiresAt > new Date()
+      ) return null;
+
+      const linkedOrder = await tx.order.findFirst({
+        where: { holdId: hold.id },
+        select: { id: true, status: true },
+      });
+      if (linkedOrder) {
+        const activePayment = await tx.payment.findFirst({
+          where: {
+            orderId: linkedOrder.id,
+            status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+          },
+          select: { id: true },
+        });
+        if (activePayment) return null;
+      }
+
       const claimed = await tx.inventoryHold.updateMany({
-        where: { id: h.id, status: "RESERVED", expiresAt: { lte: new Date() } },
+        where: {
+          id: hold.id,
+          status: { in: ["RESERVED", "PENDING_PAYMENT"] },
+          expiresAt: { lte: new Date() },
+        },
         data: { status: "EXPIRED", releasedAt: new Date() },
       });
-      if (claimed.count !== 1) return;
+      if (claimed.count !== 1) return null;
 
       await tx.ticketInventory.update({
         where: {
           sessionId_ticketTypeId_batchId: {
-            sessionId: h.sessionId,
-            ticketTypeId: h.ticketTypeId,
-            batchId: h.batchId,
+            sessionId: hold.sessionId,
+            ticketTypeId: hold.ticketTypeId,
+            batchId: hold.batchId,
           },
         },
-        data: { reservedQuantity: { decrement: h.quantity } },
+        data: { reservedQuantity: { decrement: hold.quantity } },
       });
-      released += 1;
+      return linkedOrder && ["RESERVED", "PENDING_PAYMENT"].includes(linkedOrder.status)
+        ? linkedOrder.id
+        : null;
     });
+
+    if (expiredOrderId) {
+      await prisma.order.updateMany({
+        where: { id: expiredOrderId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+        data: { status: "EXPIRED" },
+      });
+    }
+    // Contabiliza apenas quando o hold já ficou EXPIRED.
+    const current = await prisma.inventoryHold.findUnique({
+      where: { id: hold.id },
+      select: { status: true },
+    });
+    if (current?.status === "EXPIRED") released += 1;
   }
 
   return { released };
