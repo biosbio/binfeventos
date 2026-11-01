@@ -79,8 +79,17 @@ async function main(): Promise<void> {
     select: { id: true },
   });
   const adminSecret = process.env.ADMIN_MFA_SECRET;
-  if (!existingAdmin && (!adminPassword || adminPassword.length < 12 || !adminSecret || adminSecret.length < 16)) {
-    throw new Error("Para criar o administrador, defina ADMIN_PASSWORD (mínimo 12 caracteres) e ADMIN_MFA_SECRET no ambiente. Não use credenciais predefinidas nem partilhe esses segredos.");
+  if (
+    !existingAdmin &&
+    (
+      !adminPassword ||
+      adminPassword.length < 12 ||
+      !adminSecret ||
+      adminSecret.length < 16 ||
+      !/^[0-9a-fA-F]{64}$/.test(process.env.MFA_ENCRYPTION_KEY ?? "")
+    )
+  ) {
+    throw new Error("Para criar o administrador, defina ADMIN_PASSWORD (mínimo 12 caracteres), ADMIN_MFA_SECRET e MFA_ENCRYPTION_KEY (64 caracteres hexadecimais) no ambiente. Não use credenciais predefinidas nem partilhe esses segredos.");
   }
 
   const admin = await prisma.user.upsert({
