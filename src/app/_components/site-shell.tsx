@@ -3,7 +3,7 @@ import { getAuthContext } from "@/shared/auth";
 
 export async function SiteHeader() {
   const auth = await getAuthContext();
-  const isAdmin = Boolean(auth?.permissions.has("admin:platform") || auth?.permissions.has("org:manage"));
+  const isAdmin = auth?.platformRole === "PLATFORM_ADMIN";
 
   return (
     <header className="site-header">
@@ -15,13 +15,13 @@ export async function SiteHeader() {
         <Link href="/#eventos">Eventos</Link>
         <Link href="/#como-funciona">Como funciona</Link>
         <Link href="/organizador">Para organizadores</Link>
-        {auth ? <Link href="/painel">{isAdmin ? "Administração" : "Meu painel"}</Link> : null}
+        {auth ? <Link href={isAdmin ? "/admin" : "/painel"}>{isAdmin ? "Administração" : "Meu painel"}</Link> : null}
       </nav>
       <div className="nav-actions">
         {auth ? (
           <>
             <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
-            <Link className="button button-primary" href="/painel">Abrir painel</Link>
+            <Link className="button button-primary" href={isAdmin ? "/admin" : "/painel"}>Abrir painel</Link>
           </>
         ) : (
           <>
