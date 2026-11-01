@@ -575,7 +575,7 @@ export async function handleWebhook(
       providerRef: payload.providerRef,
       provider: { code: providerCode },
     },
-    select: { id: true, amountCents: true, orderId: true, status: true },
+    select: { id: true, amountCents: true, orderId: true, organizationId: true, status: true },
   });
   if (!payment) {
     // Tentativa antiga/bloqueada: nunca emitir bilhetes automaticamente, mas
