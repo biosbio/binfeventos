@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import { prisma } from "@/shared/lib/prisma";
 import { sha256 } from "@/shared/lib/security";
 import {
+  AppError,
   BusinessRuleError,
   ConflictError,
   ForbiddenError,
@@ -169,7 +170,7 @@ export async function requestTransfer(ctx: AuthContext, input: IssueTransferInpu
 
   const request = await prisma.ticketTransferRequest.create({
     data: {
-      organizationId: ctx.organizationId,
+      organizationId: ticket.organizationId,
       ticketId: ticket.id,
       requesterUserId: ctx.userId,
       newHolderFullName: input.newHolderFullName,
@@ -183,7 +184,7 @@ export async function requestTransfer(ctx: AuthContext, input: IssueTransferInpu
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: ticket.organizationId,
     actorUserId: ctx.userId,
     action: "ticket.transfer_requested",
     after: sanitizeForAudit({ requestId: request.id, ticketId: ticket.id }),
