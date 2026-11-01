@@ -278,10 +278,12 @@ export async function createVenue(ctx: AuthContext, input: VenueInput) {
 
 /** Listar eventos da organização (isolamento por contexto). */
 export async function listEvents(ctx: AuthContext, status?: EventStatus) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (!ctx.organizationId && ctx.platformRole !== "PLATFORM_ADMIN") {
+    throw new ForbiddenError("no-active-organization");
+  }
   return prisma.event.findMany({
     where: {
-      organizationId: ctx.organizationId,
+      ...(ctx.platformRole === "PLATFORM_ADMIN" ? {} : { organizationId: ctx.organizationId! }),
       ...(status && { status }),
     },
     select: {
