@@ -45,6 +45,6 @@
   },
   "overrides": {
     "postcss": "^8.5.32",
-    "tinypool": "^2.1.2"
+    "tinypool": "^2.2.0"
   }
 }
