@@ -97,22 +97,12 @@ async function main(): Promise<void> {
     select: { id: true },
   });
 
-  const orgAdminRoleId = systemRoles.get("ORG_ADMIN");
-  if (!orgAdminRoleId) throw new Error("Papel ORG_ADMIN não foi criado.");
-  await prisma.orgMembership.upsert({
-    where: {
-      organizationId_userId: { organizationId: organization.id, userId: admin.id },
-    },
-    update: { roleId: orgAdminRoleId, acceptedAt: new Date() },
-    create: {
-      organizationId: organization.id,
-      userId: admin.id,
-      roleId: orgAdminRoleId,
-      acceptedAt: new Date(),
-    },
+  // O administrador da plataforma não recebe associação automática de organizador.
+  await prisma.orgMembership.deleteMany({
+    where: { organizationId: organization.id, userId: admin.id },
   });
 
-  console.log(`Seed concluído. Administrador associado à organização BINF EVENTOS: ${adminEmail}`);
+  console.log(`Seed concluído. Administrador da plataforma configurado: ${adminEmail}`);
   console.log("MFA existente preservado; nenhum segredo MFA é apresentado na consola.");
 }
 
