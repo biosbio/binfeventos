@@ -103,6 +103,12 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     }
   }
 
+  if (session.user.platformRole === "PLATFORM_ADMIN") {
+    permissions.add("admin:platform");
+    permissions.add("subscription:manage");
+    permissions.add("audit:read");
+  }
+
   return {
     userId: session.user.id,
     email: session.user.email,
@@ -127,8 +133,8 @@ export async function requireAuth(): Promise<AuthContext> {
  * A permissão só vale DENTRO da organização ativa da sessão.
  */
 export async function requirePermission(permission: PermissionCode): Promise<AuthContext> {
-  const ctx = await requireAuth();
-  if (!ctx.organizationId) {
+  const ctx = await requirePanelAuth();
+  if (!ctx.organizationId && !ctx.permissions.has("admin:platform")) {
     throw new ForbiddenError("no-active-organization");
   }
   if (!ctx.permissions.has(permission)) {
