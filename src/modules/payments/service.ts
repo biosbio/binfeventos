@@ -362,10 +362,22 @@ export async function confirmPayment(
     if (paymentClaim.count !== 1) {
       const fresh = await tx.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
       if (fresh && ["DECLINED", "CANCELLED", "EXPIRED"].includes(fresh.status)) {
-        await tx.payment.updateMany({
+        const reopened = await tx.payment.updateMany({
           where: { id: payment.id, status: fresh.status },
           data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
         });
+        if (reopened.count === 1) {
+          const order = await tx.order.findUnique({
+            where: { id: payment.orderId },
+            select: { status: true, holdId: true },
+          });
+          if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+            await tx.inventoryHold.updateMany({
+              where: { id: order.holdId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+              data: { status: "VERIFYING" },
+            });
+          }
+        }
       }
       return false;
     }
