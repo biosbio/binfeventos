@@ -92,8 +92,14 @@ export async function beginEnableMfa(userId: string): Promise<{
   secret: string;
 }> {
   const secret = authenticator.generateSecret();
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, mfaEnabled: true },
+  });
   if (!user) throw new UnauthorizedError();
+  if (user.mfaEnabled) {
+    throw new BusinessRuleError("MFA já está ativo. Não é permitido substituir o segredo sem um fluxo de recuperação.");
+  }
 
   // Guarda o segredo ANTES de ativar; confirmação acontece depois
   await prisma.user.update({
