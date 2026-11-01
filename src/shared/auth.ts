@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/shared/lib/prisma";
 import { sha256 } from "@/shared/lib/security";
-import { ForbiddenError, UnauthorizedError } from "@/shared/errors";
+import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
 import type { PermissionCode } from "@/shared/permissions";
 
 // ============================================================
@@ -151,7 +151,7 @@ export async function isMemberOf(ctx: AuthContext, organizationId: string): Prom
 export async function requirePanelAuth(): Promise<AuthContext> {
   const ctx = await requireAuth();
   if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
-    throw new UnauthorizedError("panel-step-up-required");
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   return ctx;
 }
