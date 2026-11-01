@@ -235,6 +235,7 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     throw new NotFoundError("Tipo de bilhete disponível");
   }
   const organizationId = tt.organizationId;
+  await assertOrgActive(organizationId);
 
   // Operadores internos continuam sujeitos à autenticação reforçada.
   if (
