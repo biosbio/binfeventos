@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { hashPassword } from "../src/shared/lib/security";
+import { hashPassword, encryptMfaSecret } from "../src/shared/lib/security";
 import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
 
 // Seed: permissões, papéis, prestadores, administrador e organização inicial.
