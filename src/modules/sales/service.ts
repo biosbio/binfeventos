@@ -97,6 +97,20 @@ export async function createOrder(
   }
   const organizationId = hold.organizationId;
   await assertOrgActive(organizationId);
+  let buyerUserId: string | null = ctx.userId;
+  if (isOrgOperator) {
+    const actor = await prisma.user.findUnique({
+      where: { id: ctx.userId },
+      select: { email: true },
+    });
+    const purchaserEmail = (input.buyerEmail ?? input.attendees[0]?.email)?.trim().toLowerCase();
+    if (!purchaserEmail || purchaserEmail !== actor?.email.toLowerCase()) {
+      const purchaser = purchaserEmail
+        ? await prisma.user.findUnique({ where: { email: purchaserEmail }, select: { id: true } })
+        : null;
+      buyerUserId = purchaser?.id ?? null;
+    }
+  }
   if (hold.status !== "RESERVED") {
     throw new ConflictError(`Reserva em estado ${hold.status}.`);
   }
@@ -148,7 +162,7 @@ export async function createOrder(
       data: {
         organizationId,
         orderNumber: nextOrderNumber(),
-        buyerUserId: ctx.userId,
+        buyerUserId,
         buyerName: input.buyerName,
         buyerEmail: input.buyerEmail,
         buyerPhone: input.buyerPhone ?? null,
