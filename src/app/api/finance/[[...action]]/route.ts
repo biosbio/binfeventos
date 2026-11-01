@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
 import { requirePermission } from "@/shared/auth";
+import { z } from "zod";
 
 // ============================================================
 // Módulo finance — rotas API
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
 
     if (path === "settlements/paid") {
       const auth = await requirePermission("settlement:approve");
-      const body = await req.json<{ settlementId: string }>();
+      const body = parse(z.object({ settlementId: z.string().uuid() }), await req.json());
       const { markSettlementPaid } = await import("@/modules/finance/ledger");
       await markSettlementPaid(auth, body.settlementId);
       return NextResponse.json({ ok: true });
