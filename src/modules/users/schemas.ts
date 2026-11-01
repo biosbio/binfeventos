@@ -21,7 +21,7 @@ export const passwordSchema = z
 export const registerSchema = z.object({
   fullName: z.string().trim().min(3, "Nome completo obrigatório.").max(120),
   email: emailSchema,
-  phone: z.string().trim().min(7).max(20).optional(),
+  phone: z.string().trim().min(7, "Telefone obrigatório.").max(20),
   password: passwordSchema,
 });
 
@@ -29,6 +29,20 @@ export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, "Password obrigatória."),
   totpCode: z.string().regex(/^\d{6}$/, "Código MFA inválido.").optional(),
+});
+
+export const passwordRecoveryStartSchema = z.object({
+  email: emailSchema,
+  channel: z.enum(["EMAIL", "SMS"]),
+});
+
+export const passwordRecoveryConfirmSchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\\d{6}$/).optional(),
+  totpCode: z.string().regex(/^\\d{6}$/).optional(),
+  newPassword: passwordSchema,
+}).refine((value) => Boolean(value.code) !== Boolean(value.totpCode), {
+  message: "Indique apenas o código de recuperação apropriado.",
 });
 
 export const changePasswordSchema = z.object({
