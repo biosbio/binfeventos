@@ -804,6 +804,7 @@ model FinancialLedgerEntry {
 
   @@index([organizationId, createdAt])
   @@index([orderId])
+  @@unique([compensatesEntryId])
   @@map("financial_ledger_entries")
 }
 
