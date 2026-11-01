@@ -718,13 +718,14 @@ export async function handleWebhook(
 
 /** Opção C: revisão manual por operador autorizado — exige evidência escrita. */
 export async function manualReview(ctx: AuthContext, input: ManualReviewInput): Promise<void> {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("payment:review")) throw new ForbiddenError("payment:review");
 
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId },
   });
-  if (!payment || payment.organizationId !== ctx.organizationId) {
+  if (!payment || payment.organizationId !== organizationId) {
     throw new NotFoundError("Pagamento");
   }
   if (payment.status !== "UNDER_REVIEW" && payment.status !== "AWAITING_AUTHORIZATION") {
@@ -758,7 +759,7 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
     });
     if (confirmedPayment?.status !== "CONFIRMED") {
       await writeAudit({
-        organizationId: ctx.organizationId,
+        organizationId: organizationId,
         actorUserId: ctx.userId,
         action: "payment.reviewed_late_confirmation",
         after: sanitizeForAudit({
@@ -773,7 +774,7 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       );
     }
     await writeAudit({
-      organizationId: ctx.organizationId,
+      organizationId: organizationId,
       actorUserId: ctx.userId,
       action: "payment.reviewed",
       after: sanitizeForAudit({
@@ -788,7 +789,7 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       const changed = await tx.payment.updateMany({
         where: {
           id: payment.id,
-          organizationId: ctx.organizationId,
+          organizationId: organizationId,
           status: { in: ["UNDER_REVIEW", "AWAITING_AUTHORIZATION"] },
         },
         data: { status: "DECLINED" },
@@ -825,7 +826,7 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
       }
     });
     await writeAudit({
-      organizationId: ctx.organizationId,
+      organizationId: organizationId,
       actorUserId: ctx.userId,
       action: "payment.reviewed",
       after: sanitizeForAudit({
