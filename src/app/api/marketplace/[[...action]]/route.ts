@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError, NotFoundError } from "@/shared/errors";
-import { requireAuth, requirePermission } from "@/shared/auth";
+import { requireAuth } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
