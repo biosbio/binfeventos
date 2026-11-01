@@ -7,7 +7,7 @@ import type {
   RefundResult,
   WebhookPayload,
   ProviderResultStatus,
-} from "./adapter";
+} from "../adapter";
 
 // ============================================================
 // Adaptador SANDBOX (mock) — implementa PaymentAdapter para
