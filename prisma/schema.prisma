@@ -965,6 +965,8 @@ model Ticket {
 
   @@index([orderId])
   @@index([sessionId, status])
+  @@index([holderUserId, status])
+  @@index([holderEmail, status])
   @@map("tickets")
 }
 
