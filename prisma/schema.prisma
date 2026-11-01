@@ -939,6 +939,9 @@ model Ticket {
   sessionId      String       @db.Uuid
   ticketTypeId   String       @db.Uuid
   orderAttendeeId String?     @db.Uuid
+  holderUserId   String?      @db.Uuid
+  holderEmail    String?
+  holderName     String?
   seatId         String?     @db.Uuid
   ticketNumber   String       @unique
   status         TicketStatus @default(ISSUED)
