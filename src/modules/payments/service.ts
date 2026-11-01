@@ -1,3 +1,4 @@
+import "server-only";
 import { prisma } from "@/shared/lib/prisma";
 import {
   AppError,
@@ -10,6 +11,10 @@ import { writeAudit, sanitizeForAudit } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import { getAdapter, type ProviderResultStatus } from "./adapter";
+import { registerAllAdapters } from "./adapters";
+
+// Regista os adaptadores apenas no módulo de serviço, executado no servidor.
+registerAllAdapters();
 import type { InitiatePaymentInput, ManualReviewInput } from "./schemas";
 import { markHoldVerifying } from "@/modules/inventory/service";
 
