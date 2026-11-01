@@ -317,7 +317,7 @@ export async function releaseReserve(ctx: AuthContext, reserveId: string, notes:
 /**
  * Lançamento compensatório (correção) — livro-razão imutável:
  * nunca apaga; cria entrada que compensa a original.
- * Exige ledger:adjust (dupla aprovação em produção via fluxo de aprovação).
+ * Exige ledger:adjust, compensação integral e operador diferente do aprovador original.
  */
 export async function adjustLedger(ctx: AuthContext, input: AdjustLedgerInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
@@ -332,22 +332,41 @@ export async function adjustLedger(ctx: AuthContext, input: AdjustLedgerInput) {
   if (original.compensatesEntryId) {
     throw new BusinessRuleError("Não se compensa um lançamento compensatório.");
   }
+  if (original.approvedByUserId === ctx.userId) {
+    throw new BusinessRuleError("Segregação de funções: não pode compensar um lançamento que aprovou.");
+  }
+  if (input.amountCents !== -original.amountCents) {
+    throw new BusinessRuleError("A compensação deve anular exatamente o valor do lançamento original.");
+  }
 
-  const entry = await prisma.financialLedgerEntry.create({
-    data: {
-      organizationId: ctx.organizationId,
-      type: "ADJUSTMENT",
-      amountCents: input.amountCents,
-      orderId: original.orderId,
-      paymentId: original.paymentId,
-      settlementId: original.settlementId,
-      refundId: original.refundId,
-      description: input.description,
-      compensatesEntryId: original.id,
-      approvedByUserId: ctx.userId,
-    },
-    select: { id: true },
-  });
+  let entry: { id: string };
+  try {
+    entry = await prisma.financialLedgerEntry.create({
+      data: {
+        organizationId: ctx.organizationId,
+        type: "ADJUSTMENT",
+        amountCents: input.amountCents,
+        orderId: original.orderId,
+        paymentId: original.paymentId,
+        settlementId: original.settlementId,
+        refundId: original.refundId,
+        description: input.description,
+        compensatesEntryId: original.id,
+        approvedByUserId: ctx.userId,
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      throw new ConflictError("Este lançamento já tem uma compensação registada.");
+    }
+    throw error;
+  }
 
   await writeAudit({
     organizationId: ctx.organizationId,
