@@ -120,10 +120,20 @@ export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): 
     orderBy: { createdAt: "desc" },
   });
   if (!record) throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou inexistente. Solicite outro.");
-  await prisma.panelVerificationCode.update({
-    where: { id: record.id },
+  // Incremento condicional atómico: pedidos concorrentes não ultrapassam
+  // o limite de cinco tentativas.
+  const attempt = await prisma.panelVerificationCode.updateMany({
+    where: {
+      id: record.id,
+      consumedAt: null,
+      expiresAt: { gt: new Date() },
+      attempts: { lt: MAX_ATTEMPTS },
+    },
     data: { attempts: { increment: 1 } },
   });
+  if (attempt.count !== 1) {
+    throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou sem tentativas disponíveis.");
+  }
   if (!safeEqual(record.codeHash, codeDigest(code))) {
     throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido.");
   }
