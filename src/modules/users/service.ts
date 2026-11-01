@@ -124,8 +124,11 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
 export async function disableMfa(userId: string, totpCode: string): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { mfaSecret: true, mfaEnabled: true },
+    select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
   });
+  if (user?.platformRole === "PLATFORM_ADMIN") {
+    throw new BusinessRuleError("O MFA do administrador da plataforma é obrigatório e não pode ser desativado.");
+  }
   if (!user?.mfaEnabled || !user.mfaSecret) {
     throw new BusinessRuleError("MFA não está ativado.");
   }
