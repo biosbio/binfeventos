@@ -4,6 +4,9 @@ import {
   hashPassword,
   verifyPassword,
   rateLimit,
+  encryptMfaSecret,
+  decryptMfaSecret,
+  isEncryptedMfaSecret,
 } from "@/shared/lib/security";
 import { AppError, BusinessRuleError, ConflictError, UnauthorizedError } from "@/shared/errors";
 import { createSession, revokeCurrentSession } from "@/shared/auth";
@@ -70,8 +73,16 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     if (!user.mfaSecret) {
       throw new AppError("MFA_MISCONFIGURED", 500, "MFA mal configurado. Contacte o suporte.");
     }
-    if (!input.totpCode || !authenticator.verify({ token: input.totpCode, secret: user.mfaSecret })) {
+    const mfaSecret = decryptMfaSecret(user.mfaSecret);
+    if (!input.totpCode || !authenticator.verify({ token: input.totpCode, secret: mfaSecret })) {
       throw new AppError("MFA_REQUIRED", 401, "Código MFA obrigatório ou inválido.");
+    }
+    // Migração transparente de segredos antigos em texto claro.
+    if (!isEncryptedMfaSecret(user.mfaSecret) && process.env.MFA_ENCRYPTION_KEY) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { mfaSecret: encryptMfaSecret(mfaSecret) },
+      });
     }
   }
 
@@ -104,7 +115,7 @@ export async function beginEnableMfa(userId: string): Promise<{
   // Guarda o segredo ANTES de ativar; confirmação acontece depois
   await prisma.user.update({
     where: { id: userId },
-    data: { mfaSecret: secret },
+    data: { mfaSecret: encryptMfaSecret(secret) },
   });
 
   const otpauthUrl = authenticator.keyuri(user.email, "BINF EVENTOS", secret);
@@ -120,7 +131,7 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
   if (!user?.mfaSecret) {
     throw new BusinessRuleError("Ative o MFA antes de confirmar.");
   }
-  if (!authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
