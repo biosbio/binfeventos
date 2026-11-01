@@ -65,7 +65,7 @@ export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" 
   if (!ctx.organizationId || ctx.permissions.size === 0) {
     throw new ForbiddenError("organizer-membership-required");
   }
-  if (rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
+  if (await rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Limite de códigos atingido. Aguarde 15 minutos.");
   }
 
@@ -152,7 +152,7 @@ export async function verifyAdminPanelMfa(
   totpCode: string,
 ): Promise<void> {
   if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("platform-admin-only");
-  if (rateLimit(`panel-admin-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
+  if (await rateLimit(`panel-admin-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de autenticação. Aguarde cinco minutos.");
   }
   const user = await prisma.user.findUnique({
