@@ -126,6 +126,6 @@ describe("MulticaixaExpressAdapter.refund", () => {
       adapterConfig: { merchantToken: "tok" },
     });
     expect(r.status).toBe("PROCESSING");
-    expect(String(r.rawPayload)).toContain("EMIS");
+    expect(JSON.stringify(r.rawPayload)).toContain("EMIS");
   });
 });
