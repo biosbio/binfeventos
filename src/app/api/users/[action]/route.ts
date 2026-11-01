@@ -96,7 +96,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         const { requireAuth } = await import("@/shared/auth");
         const ctxAuth = await requireAuth();
         if (ctxAuth.platformRole === "PLATFORM_ADMIN") {
-          const body = parseBody(z.object({ password: z.string().min(1), totpCode: z.string().regex(/^\\d{6}$/) }), await req.json());
+          const body = parseBody(z.object({ password: z.string().min(1), totpCode: z.string().regex(/^\d{6}$/) }), await req.json());
           const { verifyAdminPanelMfa } = await import("@/modules/users/panel-auth");
           await verifyAdminPanelMfa(ctxAuth, body.password, body.totpCode);
         } else {
