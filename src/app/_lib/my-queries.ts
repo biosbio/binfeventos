@@ -1,5 +1,5 @@
 import { prisma } from "@/shared/lib/prisma";
-import { ForbiddenError, NotFoundError } from "@/shared/errors";
+import { NotFoundError } from "@/shared/errors";
 import { requireAuth } from "@/shared/auth";
 
 // ============================================================
@@ -46,7 +46,7 @@ export async function getMyContext() {
   const ctx = await requireAuth();
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
-    select: { fullName: true, email: true, mfaEnabled: true },
+    select: { fullName: true, email: true },
   });
   if (!user) throw new NotFoundError("Utilizador");
   return { ctx, user };

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 
 // ============================================================
-// Login — cliente mínimo: envia apenas email/password (+TOTP).
+// Login — envia email/password e pede MFA adicional apenas para administradores.
 // A password NÃO é persistida no browser (sem localStorage).
 // O backend responde com cookie HttpOnly de sessão.
 // ============================================================
@@ -41,8 +41,10 @@ export default function LoginPage() {
       });
       const data = (await res.json()) as { code?: string; message?: string };
       if (!res.ok) {
-        if (data.code === "MFA_REQUIRED" || data.message?.includes("MFA")) {
+        if (data.code === "MFA_REQUIRED") {
           setNeedsMfa(true);
+          setError(submittedTotp ? "Código inválido. Introduza o código atual da aplicação autenticadora." : null);
+          return;
         }
         setError(data.message ?? "Não foi possível entrar.");
         return;
@@ -100,7 +102,8 @@ export default function LoginPage() {
 
           {needsMfa ? (
             <div className="form-field">
-              <label htmlFor="totp">Código MFA (6 dígitos)</label>
+              <label htmlFor="totp">Código de segurança do administrador</label>
+              <span className="form-help">Introduza os 6 dígitos apresentados na aplicação autenticadora do seu telemóvel.</span>
               <input
                 id="totp"
                 name="totpCode"
@@ -108,6 +111,7 @@ export default function LoginPage() {
                 autoComplete="one-time-code"
                 pattern="[0-9]{6}"
                 maxLength={6}
+                required
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
               />

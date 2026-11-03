@@ -8,7 +8,7 @@ import {
   decryptMfaSecret,
   isEncryptedMfaSecret,
 } from "@/shared/lib/security";
-import { AppError, BusinessRuleError, ConflictError, UnauthorizedError } from "@/shared/errors";
+import { AppError, BusinessRuleError, ConflictError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
 import { createSession, revokeCurrentSession } from "@/shared/auth";
 import type { LoginInput, RegisterInput } from "./schemas";
 
@@ -16,7 +16,7 @@ import type { LoginInput, RegisterInput } from "./schemas";
 // Módulo users — lógica de negócio de contas.
 // Regras de segurança:
 // - Login com rate limit (SEC-03/SEC-05) e mensagem genérica em falha.
-// - MFA TOTP obrigatório quando ativado (SEC-01).
+// - MFA TOTP obrigatório para administradores da plataforma.
 // - Auditoria de auth via writeAudit com organizationId da 1ª org do
 //   utilizador (Auditoria exige contexto organizacional; contas sem org
 //   ficam auditadas pela org do convite aceito, ou logadas em server log).
@@ -44,7 +44,7 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
   return user;
 }
 
-/** Autentica e cria a sessão (com MFA quando ativado). */
+/** Autentica e cria a sessão (com MFA obrigatório para administradores). */
 export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
   if (
@@ -74,8 +74,7 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
   }
 
-  // MFA: só entra com código TOTP válido (SEC-01)
-  if (user.mfaEnabled) {
+  if (user.platformRole === "PLATFORM_ADMIN") {
     if (!user.mfaSecret) {
       throw new AppError("MFA_MISCONFIGURED", 500, "MFA mal configurado. Contacte o suporte.");
     }
@@ -99,7 +98,11 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     select: { organizationId: true },
   });
 
-  await createSession(user.id, membership?.organizationId ?? null);
+  await createSession(
+    user.id,
+    membership?.organizationId ?? null,
+    user.platformRole === "PLATFORM_ADMIN",
+  );
   return { mfaRequired: false };
 }
 
@@ -111,9 +114,12 @@ export async function beginEnableMfa(userId: string): Promise<{
   const secret = authenticator.generateSecret();
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { email: true, mfaEnabled: true },
+    select: { email: true, mfaEnabled: true, platformRole: true },
   });
   if (!user) throw new UnauthorizedError();
+  if (user.platformRole !== "PLATFORM_ADMIN") {
+    throw new ForbiddenError("MFA disponível apenas para administradores da plataforma.");
+  }
   if (user.mfaEnabled) {
     throw new BusinessRuleError("MFA já está ativo. Não é permitido substituir o segredo sem um fluxo de recuperação.");
   }
@@ -135,8 +141,11 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
   }
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { mfaSecret: true, mfaEnabled: true },
+    select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
   });
+  if (user?.platformRole !== "PLATFORM_ADMIN") {
+    throw new ForbiddenError("MFA disponível apenas para administradores da plataforma.");
+  }
   if (!user?.mfaSecret) {
     throw new BusinessRuleError("Ative o MFA antes de confirmar.");
   }
@@ -144,69 +153,6 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
-}
-
-/** Desativa MFA (exige código válido — não pode ser desligado sem prova). */
-export async function disableMfa(userId: string, totpCode: string): Promise<void> {
-  if (await rateLimit(`mfa-disable:${userId}`, 5, 5 * 60 * 1000)) {
-    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
-  }
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
-  });
-  if (user?.platformRole === "PLATFORM_ADMIN") {
-    throw new BusinessRuleError("O MFA do administrador da plataforma é obrigatório e não pode ser desativado.");
-  }
-  if (!user?.mfaEnabled || !user.mfaSecret) {
-    throw new BusinessRuleError("MFA não está ativado.");
-  }
-  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
-    throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
-  }
-  await prisma.user.update({
-    where: { id: userId },
-    data: { mfaEnabled: false, mfaSecret: null },
-  });
-}
-
-/** Alteração de password: revoga TODAS as sessões por segurança. */
-export async function changePassword(
-  userId: string,
-  currentPassword: string,
-  newPassword: string,
-  totpCode?: string
-): Promise<void> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { passwordHash: true },
-  });
-  if (!user) throw new UnauthorizedError();
-
-  const ok = await verifyPassword(user.passwordHash, currentPassword);
-  if (!ok) throw new UnauthorizedError();
-
-  const account = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { platformRole: true, mfaEnabled: true, mfaSecret: true },
-  });
-  if (account?.platformRole === "PLATFORM_ADMIN") {
-    if (!account.mfaEnabled || !account.mfaSecret || !totpCode || !/^\d{6}$/.test(totpCode) ||
-        !authenticator.verify({ token: totpCode, secret: decryptMfaSecret(account.mfaSecret) })) {
-      throw new AppError("INVALID_MFA", 401, "Confirme a alteração com o código da aplicação autenticadora.");
-    }
-  }
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: { passwordHash: await hashPassword(newPassword) },
-  });
-
-  // Revoga todas as sessões ativas (SEC-03)
-  await prisma.session.updateMany({
-    where: { userId, revokedAt: null },
-    data: { revokedAt: new Date() },
-  });
 }
 
 /** Logout: revoga a sessão atual. */

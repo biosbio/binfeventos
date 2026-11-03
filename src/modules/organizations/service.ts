@@ -1,7 +1,8 @@
 import { prisma } from "@/shared/lib/prisma";
-import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError } from "@/shared/errors";
+import { AppError, BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from "@/shared/errors";
 import { writeAudit, assertOrgActive, sanitizeForAudit } from "@/shared/audit";
-import type { AuthContext } from "@/shared/auth";
+import { markPanelVerified, type AuthContext } from "@/shared/auth";
+import { rateLimit, verifyPassword } from "@/shared/lib/security";
 import type { CreateOrgInput, InviteMemberInput } from "./schemas";
 
 // ============================================================
@@ -9,14 +10,14 @@ import type { CreateOrgInput, InviteMemberInput } from "./schemas";
 // Regras:
 // - Isolamento multiempresa OBRIGATÓRIO: toda consulta filtra por
 //   organizationId e o contexto da sessão (SEC-02 ABAC).
-// - O criador torna-se ORG_ADMIN e a associação fica aceite
-//   automaticamente (é o próprio criador).
+// - O organizador recém-registado recebe apenas permissões de organizador;
+//   a associação fica aceite automaticamente (é o próprio criador).
 // - Convidar exige permissão org:invite; atribuir papel, org:role:assign.
 // - Suspender organização exige dupla validação via admin central
 //   (suspensão seletiva — regra especial de segurança nº 10).
 // ============================================================
 
-/** Cria organização e torna o criador ORG_ADMIN (aceite por definição). */
+/** Cria organização e associa o criador como organizador (aceite por definição). */
 export async function createOrganization(
   ctx: AuthContext,
   input: CreateOrgInput
@@ -36,23 +37,33 @@ export async function createOrganization(
       select: { id: true, slug: true },
     });
 
-    // Papel ORG_ADMIN (de sistema, reutilizável por todas as orgs)
-    const adminRole = await tx.role.findFirst({
-      where: { name: "ORG_ADMIN", isSystem: true },
+    const organizerRole = await tx.role.findFirst({
+      where: { name: "ORGANIZER", isSystem: true },
       select: { id: true },
     });
-    if (!adminRole) {
-      throw new BusinessRuleError("Papel de sistema em falta — execute o seed.");
+    if (!organizerRole) {
+      throw new BusinessRuleError("Papel de organizador em falta — execute o seed.");
     }
 
     await tx.orgMembership.create({
       data: {
         organizationId: org.id,
         userId: ctx.userId,
-        roleId: adminRole.id,
+        roleId: organizerRole.id,
         acceptedAt: new Date(), // criador não precisa de convite
       },
     });
+
+    const activeSession = await tx.session.updateMany({
+      where: {
+        id: ctx.sessionId,
+        userId: ctx.userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: { organizationId: org.id, panelVerifiedUntil: null },
+    });
+    if (activeSession.count !== 1) throw new UnauthorizedError();
 
     return org;
   });
@@ -65,6 +76,35 @@ export async function createOrganization(
   });
 
   return result;
+}
+
+/** Cria a primeira organização e confirma o acesso do organizador com password. */
+export async function onboardOrganizer(
+  ctx: AuthContext,
+  input: CreateOrgInput,
+  password: string,
+): Promise<{ id: string; slug: string }> {
+  if (ctx.platformRole === "PLATFORM_ADMIN") {
+    throw new ForbiddenError("platform-admin-uses-admin-panel");
+  }
+  if (ctx.organizationId || ctx.permissions.size > 0) {
+    throw new ConflictError("Esta conta já está associada a uma organização.");
+  }
+  if (await rateLimit(`organizer-onboarding:${ctx.userId}`, 5, 15 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde quinze minutos.");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { passwordHash: true },
+  });
+  if (!user || !(await verifyPassword(user.passwordHash, password))) {
+    throw new UnauthorizedError();
+  }
+
+  const organization = await createOrganization(ctx, input);
+  await markPanelVerified(ctx.sessionId);
+  return organization;
 }
 
 /** Convida membro por email para a organização ativa do contexto. */

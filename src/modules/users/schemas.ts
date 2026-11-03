@@ -45,17 +45,7 @@ export const passwordRecoveryConfirmSchema = z.object({
   message: "Indique apenas o código de recuperação apropriado.",
 });
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1),
-  newPassword: passwordSchema,
-  totpCode: z.string().regex(/^\d{6}$/).optional(),
-});
-
 export const enableMfaSchema = z.object({
-  totpCode: z.string().regex(/^\d{6}$/, "Código MFA inválido."),
-});
-
-export const disableMfaSchema = z.object({
   totpCode: z.string().regex(/^\d{6}$/, "Código MFA inválido."),
 });
 

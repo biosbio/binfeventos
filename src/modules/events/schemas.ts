@@ -22,12 +22,22 @@ export const eventCategorySchema = z.enum([
   "OTHER",
 ]);
 
+const coverImageUrlSchema = z.string().max(2000).refine((value) => {
+  if (/^\/uploads\/event-covers\/[0-9a-f-]+\.(?:jpg|png|webp)$/i.test(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}, "URL de capa inválida.");
+
 export const createEventSchema = z.object({
   name: z.string().trim().min(3, "Nome do evento obrigatório.").max(150),
-  slug: eventSlugSchema,
+  slug: eventSlugSchema.optional(),
   description: z.string().trim().max(5000).optional(),
   category: eventCategorySchema.default("OTHER"),
-  coverImageUrl: z.string().url("URL de capa inválida.").max(2000).optional(),
+  coverImageUrl: coverImageUrlSchema.optional(),
   entryRules: z.string().trim().max(3000).optional(),
   terms: z.string().trim().max(10000).optional(),
 });

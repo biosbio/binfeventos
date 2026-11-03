@@ -31,12 +31,19 @@ function formatPrice(cents: number, currency: string): string {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(cents / 100);
 }
 
-export default async function MyAccountPage() {
+export default async function MyAccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ aviso?: string }>;
+}) {
+  const { aviso } = await searchParams;
   let user;
   let orders;
+  let isAdmin = false;
   try {
     const context = await getMyContext();
     user = context.user;
+    isAdmin = context.ctx.platformRole === "PLATFORM_ADMIN";
     orders = await listMyOrders(context.ctx.userId);
   } catch {
     redirect("/login");
@@ -51,11 +58,16 @@ export default async function MyAccountPage() {
           Olá, {user.fullName.split(" ")[0]}
         </h1>
         <p className="section-copy" style={{ maxWidth: "none" }}>
-          As suas encomendas e bilhetes digitais. {user.mfaEnabled ? "MFA ativado ✓" : "MFA desativado — ative na segurança da conta."}
+          As suas encomendas e bilhetes digitais.
         </p>
-        <div className="account-security-link">
-          <Link className="button button-secondary" href="/minha-conta/seguranca">Alterar password e segurança</Link>
-        </div>
+
+        {!isAdmin ? (
+          <div className="panel" role="status" style={{ marginTop: 22 }}>
+            <strong>{aviso === "criar-evento" ? "Ainda não tem uma organização? Pode começar por aqui." : "Também pode organizar eventos com esta conta."}</strong>
+            <p className="form-help">Crie o perfil da sua organização e submeta uma proposta. O evento só fica público após aprovação da equipa BINF EVENTOS.</p>
+            <Link className="button button-primary" href="/painel/eventos/novo">Propor um evento</Link>
+          </div>
+        ) : null}
 
         {orders.length === 0 ? (
           <div className="empty-state" style={{ marginTop: 30 }}>

@@ -8,7 +8,7 @@ import {
   NotFoundError,
 } from "@/shared/errors";
 import { writeAudit, sanitizeForAudit } from "@/shared/audit";
-import { requirePermission, type AuthContext } from "@/shared/auth";
+import { type AuthContext } from "@/shared/auth";
 import { canTransition, transitionLabel } from "./state-machine";
 import type { CreateEventInput, SessionInput, VenueInput } from "./schemas";
 
@@ -44,17 +44,29 @@ async function scopedEvent(ctx: AuthContext, eventId: string) {
 export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
 
-  const slugTaken = await prisma.event.findFirst({
-    where: { organizationId: ctx.organizationId, slug: input.slug },
+  const baseSlug = (input.slug || input.name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "") || "evento";
+  let slug = baseSlug;
+  for (let suffix = 2; await prisma.event.findFirst({
+    where: { organizationId: ctx.organizationId, slug },
     select: { id: true },
-  });
-  if (slugTaken) throw new ConflictError("Slug já utilizado nesta organização.");
+  }); suffix += 1) {
+    const suffixText = `-${suffix}`;
+    slug = `${baseSlug.slice(0, 80 - suffixText.length).replace(/-+$/g, "")}${suffixText}`;
+  }
 
   const event = await prisma.event.create({
     data: {
       organizationId: ctx.organizationId,
       name: input.name,
-      slug: input.slug,
+      slug,
       description: input.description ?? null,
       category: input.category,
       coverImageUrl: input.coverImageUrl ?? null,
@@ -70,7 +82,7 @@ export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "event.created",
-    after: sanitizeForAudit(input),
+    after: sanitizeForAudit({ ...input, slug }),
   });
 
   return event;

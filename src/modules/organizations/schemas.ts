@@ -20,6 +20,10 @@ export const createOrgSchema = z.object({
   currency: z.string().trim().length(3, "Moeda ISO (ex: AOA).").default("AOA"),
 });
 
+export const onboardOrganizerSchema = createOrgSchema.extend({
+  password: z.string().min(1, "Password obrigatória."),
+});
+
 export const inviteMemberSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   roleName: z.string().trim().min(3).max(60),

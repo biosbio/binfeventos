@@ -21,15 +21,25 @@ describe("eventSlugSchema", () => {
 });
 
 describe("createEventSchema", () => {
-  it("exige nome e slug; category default OTHER", () => {
+  it("exige nome, permite slug opcional e define category OTHER por omissão", () => {
     const r = createEventSchema.parse({ name: "Show BINF", slug: "show-binf" });
     expect(r.category).toBe("OTHER");
+    expect(createEventSchema.parse({ name: "Outro evento" }).slug).toBeUndefined();
   });
 
   it("rejeita URL de capa inválida", () => {
     expect(
       createEventSchema.safeParse({ name: "X", slug: "abc", coverImageUrl: "nope" }).success
     ).toBe(false);
+  });
+
+  it("aceita o caminho gerado pelo carregamento de imagem", () => {
+    expect(
+      createEventSchema.safeParse({
+        name: "Show BINF",
+        coverImageUrl: "/uploads/event-covers/2d9bf441-6408-4efb-9eb3-9cb1226bd2ef.webp",
+      }).success
+    ).toBe(true);
   });
 });
 

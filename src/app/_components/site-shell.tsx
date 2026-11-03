@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAuthContext } from "@/shared/auth";
+import LogoutButton from "./logout-button";
 
 export async function SiteHeader() {
   const auth = await getAuthContext();
@@ -22,6 +23,7 @@ export async function SiteHeader() {
           <>
             <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
             <Link className="button button-primary" href={isAdmin ? "/admin" : "/painel"}>Abrir painel</Link>
+            <LogoutButton />
           </>
         ) : (
           <>

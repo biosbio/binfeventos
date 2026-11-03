@@ -1,20 +1,14 @@
-import { randomInt } from "crypto";
 import { authenticator } from "otplib";
 import { prisma } from "@/shared/lib/prisma";
 import { markPanelVerified, type AuthContext } from "@/shared/auth";
-import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
+import { AppError, ForbiddenError } from "@/shared/errors";
 import {
   verifyPassword,
-  sha256,
-  safeEqual,
   rateLimit,
   decryptMfaSecret,
   encryptMfaSecret,
   isEncryptedMfaSecret,
 } from "@/shared/lib/security";
-
-const CODE_TTL_MS = 5 * 60 * 1000;
-const MAX_ATTEMPTS = 5;
 
 export async function deliverEmail(to: string, code: string, subject = "Código de acesso ao painel — BINF EVENTOS", validityMinutes = 5): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -61,97 +55,20 @@ export async function deliverSms(to: string, code: string, purpose = "acesso ao 
   if (!response.ok) throw new AppError("SMS_DELIVERY_FAILED", 502, "Não foi possível enviar o código por SMS.");
 }
 
-function codeDigest(code: string): string {
-  const pepper = process.env.SESSION_SECRET;
-  if (!pepper || pepper.length < 32) {
-    throw new AppError("SERVER_MISCONFIGURED", 500, "SESSION_SECRET deve ter pelo menos 32 caracteres.");
-  }
-  return sha256(`${pepper}:${code}`);
-}
-
-/** Envia um OTP para um organizador já associado a uma organização ativa. */
-export async function sendOrganizerPanelCode(ctx: AuthContext, channel: "EMAIL" | "SMS"): Promise<void> {
-  if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
-  if (!ctx.organizationId || ctx.permissions.size === 0) {
-    throw new ForbiddenError("organizer-membership-required");
-  }
-  if (await rateLimit(`panel-code:${ctx.userId}`, 5, 15 * 60 * 1000)) {
-    throw new AppError("RATE_LIMITED", 429, "Limite de códigos atingido. Aguarde 15 minutos.");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: ctx.userId },
-    select: { email: true, phone: true },
-  });
-  if (!user) throw new UnauthorizedError();
-
-  const recentCode = await prisma.panelVerificationCode.findFirst({
-    where: { userId: ctx.userId },
-    orderBy: { createdAt: "desc" },
-    select: { createdAt: true },
-  });
-  if (recentCode && Date.now() - recentCode.createdAt.getTime() < 60_000) {
-    throw new AppError("RESEND_TOO_SOON", 429, "Aguarde 60 segundos antes de solicitar outro código.");
-  }
-
-  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-  await prisma.panelVerificationCode.updateMany({
-    where: { userId: ctx.userId, consumedAt: null },
-    data: { consumedAt: new Date() },
-  });
-  const record = await prisma.panelVerificationCode.create({
-    data: {
-      userId: ctx.userId,
-      codeHash: codeDigest(code),
-      channel,
-      expiresAt: new Date(Date.now() + CODE_TTL_MS),
-    },
-    select: { id: true },
-  });
-
-  try {
-    if (channel === "EMAIL") await deliverEmail(user.email, code);
-    else {
-      if (!user.phone) throw new AppError("PHONE_REQUIRED", 422, "Adicione um número de telefone à sua conta antes de escolher SMS.");
-      await deliverSms(user.phone, code);
-    }
-  } catch (error) {
-    await prisma.panelVerificationCode.update({ where: { id: record.id }, data: { consumedAt: new Date() } });
-    throw error;
-  }
-}
-
-/** Valida OTP e eleva apenas a sessão atual durante 10 minutos. */
-export async function verifyOrganizerPanelCode(ctx: AuthContext, code: string): Promise<void> {
+/** Organizador confirma a password antes de abrir o painel. */
+export async function verifyOrganizerPanelPassword(ctx: AuthContext, password: string): Promise<void> {
   if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
   if (!ctx.organizationId || ctx.permissions.size === 0) throw new ForbiddenError("organizer-membership-required");
-  const record = await prisma.panelVerificationCode.findFirst({
-    where: { userId: ctx.userId, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!record) throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou inexistente. Solicite outro.");
-  // Incremento condicional atómico: pedidos concorrentes não ultrapassam
-  // o limite de cinco tentativas.
-  const attempt = await prisma.panelVerificationCode.updateMany({
-    where: {
-      id: record.id,
-      consumedAt: null,
-      expiresAt: { gt: new Date() },
-      attempts: { lt: MAX_ATTEMPTS },
-    },
-    data: { attempts: { increment: 1 } },
-  });
-  if (attempt.count !== 1) {
-    throw new AppError("INVALID_PANEL_CODE", 401, "Código expirado ou sem tentativas disponíveis.");
+  if (await rateLimit(`panel-organizer-password:${ctx.userId}`, 5, 15 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde quinze minutos.");
   }
-  if (!safeEqual(record.codeHash, codeDigest(code))) {
-    throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido.");
-  }
-  const consumed = await prisma.panelVerificationCode.updateMany({
-    where: { id: record.id, consumedAt: null, codeHash: codeDigest(code), attempts: { lte: MAX_ATTEMPTS } },
-    data: { consumedAt: new Date() },
+  const user = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { passwordHash: true },
   });
-  if (consumed.count !== 1) throw new AppError("INVALID_PANEL_CODE", 401, "Código inválido ou já utilizado.");
+  if (!user || !(await verifyPassword(user.passwordHash, password))) {
+    throw new AppError("INVALID_CREDENTIALS", 401, "Password inválida.");
+  }
   await markPanelVerified(ctx.sessionId);
 }
 

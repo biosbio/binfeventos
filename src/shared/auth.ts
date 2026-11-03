@@ -29,7 +29,11 @@ export interface AuthContext {
 }
 
 /** Cria a sessão e define o cookie seguro. */
-export async function createSession(userId: string, organizationId: string | null): Promise<void> {
+export async function createSession(
+  userId: string,
+  organizationId: string | null,
+  panelVerified = false,
+): Promise<void> {
   const token = crypto.randomUUID() + "." + crypto.randomUUID().replace(/-/g, "");
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
@@ -39,6 +43,7 @@ export async function createSession(userId: string, organizationId: string | nul
       organizationId,
       tokenHash: sha256(token),
       expiresAt,
+      panelVerifiedUntil: panelVerified ? new Date(Date.now() + 10 * 60 * 1000) : null,
     },
   });
 

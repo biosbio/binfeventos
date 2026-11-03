@@ -10,6 +10,7 @@ node_modules/
 .next/
 dist/
 build/
+public/uploads/event-covers/
 
 # Prisma gerado
 prisma/generated/

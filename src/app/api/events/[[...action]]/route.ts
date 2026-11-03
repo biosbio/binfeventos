@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ValidationError, NotFoundError, ForbiddenError } from "@/shared/errors";
+import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import pathModule from "node:path";
+import { errorResponse, AppError, ValidationError, NotFoundError, ForbiddenError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
+import { rateLimit } from "@/shared/lib/security";
 import { z } from "zod";
 
 // ============================================================
@@ -19,6 +23,20 @@ const statusSchema = z.enum([
   "DRAFT", "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
 ]);
 const transitionSchema = z.object({ to: statusSchema });
+const MAX_COVER_SIZE = 5 * 1024 * 1024;
+
+function isSupportedImage(bytes: Uint8Array, mimeType: string): boolean {
+  if (mimeType === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (mimeType === "image/png") {
+    return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value);
+  }
+  if (mimeType === "image/webp") {
+    return bytes.length >= 12 &&
+      String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" &&
+      String.fromCharCode(...bytes.slice(8, 12)) === "WEBP";
+  }
+  return false;
+}
 
 function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
@@ -35,6 +53,33 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
   const path = action.join("/");
 
   try {
+    if (path === "upload-cover") {
+      const auth = await requirePermission("event:create");
+      if (await rateLimit(`event-cover-upload:${auth.userId}`, 20, 60 * 60 * 1000)) {
+        throw new AppError("RATE_LIMITED", 429, "Limite de carregamentos de imagem atingido. Tente novamente mais tarde.");
+      }
+      const formData = await req.formData();
+      const file = formData.get("file");
+      if (!(file instanceof File) || file.size === 0 || file.size > MAX_COVER_SIZE) {
+        throw new ValidationError("Escolha uma imagem até 5 MB.");
+      }
+      const extensionByType: Record<string, string> = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+      };
+      const extension = extensionByType[file.type];
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!extension || !isSupportedImage(bytes, file.type)) {
+        throw new ValidationError("Formato de imagem inválido. Use JPEG, PNG ou WebP.");
+      }
+      const directory = pathModule.join(process.cwd(), "public", "uploads", "event-covers");
+      await mkdir(directory, { recursive: true });
+      const filename = `${randomUUID()}.${extension}`;
+      await writeFile(pathModule.join(directory, filename), bytes, { flag: "wx" });
+      return NextResponse.json({ ok: true, url: `/uploads/event-covers/${filename}` }, { status: 201 });
+    }
+
     // POST /api/events/create
     if (path === "create") {
       const auth = await requirePermission("event:create");
@@ -106,7 +151,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
   const { action = [] } = await ctx.params;
-  const path = action.join("/");
 
   try {
     // PATCH /api/events/{id}

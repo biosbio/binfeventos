@@ -6,6 +6,17 @@ import { SiteHeader, SiteFooter } from "../_components/site-shell";
 
 export const dynamic = "force-dynamic";
 
+const EVENT_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Em análise",
+  PUBLISHED: "Publicado",
+  SUSPENDED: "Suspenso",
+  SOLD_OUT: "Esgotado",
+  POSTPONED: "Adiado",
+  CANCELLED: "Cancelado",
+  COMPLETED: "Concluído",
+  CLOSED: "Encerrado",
+};
+
 export default async function OrganizerPanelPage() {
   let ctx;
   try {
@@ -17,38 +28,22 @@ export default async function OrganizerPanelPage() {
   if (ctx.platformRole === "PLATFORM_ADMIN") redirect("/admin");
 
   if (!ctx.permissions.has("event:read") || !ctx.organizationId) {
-    redirect("/organizador");
+    redirect("/minha-conta?aviso=criar-evento");
   }
 
   const orgId = ctx.organizationId;
-  const [events, pendingPayments, todaySales, openAlerts] = await Promise.all([
-    prisma.event.findMany({
-      where: { organizationId: orgId },
+  const events = await prisma.event.findMany({
+      where: { organizationId: orgId, responsibleUserId: ctx.userId },
       select: {
         id: true, name: true, slug: true, status: true, publishedAt: true,
         sessions: { select: { startsAt: true }, orderBy: { startsAt: "asc" }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
       take: 25,
-    }),
-    prisma.payment.count({
-      where: { organizationId: orgId, status: { in: ["UNDER_REVIEW", "AWAITING_AUTHORIZATION"] } },
-    }),
-    prisma.order.aggregate({
-      where: {
-        organizationId: orgId,
-        status: "CONFIRMED",
-        confirmedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-      _sum: { totalCents: true },
-      _count: true,
-    }),
-    prisma.fraudAlert.count({ where: { organizationId: orgId, status: "OPEN" } }),
-  ]);
-
-  const currency = "XOF";
-  const fmt = (cents: number) =>
-    new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(cents / 100);
+    });
+  const pendingApproval = events.filter((event) => event.status === "DRAFT").length;
+  const publishedEvents = events.filter((event) => event.status === "PUBLISHED").length;
+  const otherEvents = events.length - pendingApproval - publishedEvents;
 
   return (
     <>
@@ -60,14 +55,14 @@ export default async function OrganizerPanelPage() {
             <h1>O seu painel</h1>
             <p>Acompanhe os seus eventos, atividade e operações num só lugar.</p>
           </div>
-          <div className="dashboard-heading-actions"><Link className="button button-secondary" href="/minha-conta/seguranca">Segurança da conta</Link><Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link></div>
+          <div className="dashboard-heading-actions"><Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link></div>
         </div>
 
         <div className="dashboard-stats">
-          <div className="panel"><div className="price-label">Vendas confirmadas (24h)</div><div className="price">{fmt(todaySales._sum.totalCents ?? 0)}</div><div className="form-help">{todaySales._count} encomendas</div></div>
-          <div className="panel"><div className="price-label">Pagamentos a analisar</div><div className="price">{pendingPayments}</div><div className="form-help">Exigem análise</div></div>
-          <div className="panel"><div className="price-label">Alertas abertos</div><div className="price">{openAlerts}</div><div className="form-help">Segurança e antifraude</div></div>
-          <div className="panel"><div className="price-label">Eventos</div><div className="price">{events.length}</div><div className="form-help">Na sua organização</div></div>
+          <div className="panel"><div className="price-label">Eventos criados por si</div><div className="price">{events.length}</div><div className="form-help">Os seus eventos</div></div>
+          <div className="panel"><div className="price-label">Em análise</div><div className="price">{pendingApproval}</div><div className="form-help">Aguardam aprovação</div></div>
+          <div className="panel"><div className="price-label">Publicados</div><div className="price">{publishedEvents}</div><div className="form-help">Aprovados pela equipa</div></div>
+          <div className="panel"><div className="price-label">Outros estados</div><div className="price">{otherEvents}</div><div className="form-help">Cancelados ou suspensos</div></div>
         </div>
 
         <div className="dashboard-list-heading">
@@ -84,7 +79,8 @@ export default async function OrganizerPanelPage() {
                   <strong>{event.name}</strong>
                   <div className="form-help">{event.sessions[0] ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short" }).format(event.sessions[0].startsAt) : "Sessão ainda não definida"}</div>
                 </div>
-                <span className={`status-pill status-${event.status.toLowerCase()}`}>{event.status}</span>
+                <span className={`status-pill status-${event.status.toLowerCase()}`}>{EVENT_STATUS_LABELS[event.status] ?? event.status}</span>
+                <Link className="text-link" href={`/painel/eventos/${event.id}`}>Gerir evento →</Link>
                 {event.status === "PUBLISHED" ? <Link className="text-link" href={`/eventos/${event.slug}`}>Ver evento →</Link> : null}
               </article>
             ))}

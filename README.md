@@ -89,7 +89,10 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/checkout` | Compra em 3 passos (reserva → titulares → pagamento) | Client |
 | `/portaria` | Validação de QR online com registo de recusas | Client |
 | `/painel` | KPIs do organizador (vendas, pagamentos, alertas), protegido por validação reforçada | Server |
-| `/acesso-painel` | Reautenticação: password + TOTP para admin; OTP por email/SMS para organizador | Server/Client |
+| `/acesso-painel` | Reautenticação: password + TOTP para admin; password para organizador | Server/Client |
+| `/painel/eventos/novo` | Submeter evento para aprovação; inclui configuração da organização para novos organizadores | Server/Client |
+| `/painel/eventos/{id}` | Gerir evento, sessões e imagem de capa | Server/Client |
+| `/admin/events` | Rever e aprovar propostas de eventos | Server/Client |
 | `/admin` | Painel central da plataforma, exclusivo do administrador | Server |
 | `/financas` | Liquidações + livro-razão (FINANCE_MANAGER) | Server |
 | `/financas/acoes` | Preparar/aprovar/pagar liquidações (dupla aprovação) | Client |
@@ -107,17 +110,14 @@ npm run test:e2e          # arranca o dev server automaticamente
 | Método | Rota | Descrição | Requisito |
 |---|---|---|---|
 | POST | `/api/users/register` | Registar conta | público |
-| POST | `/api/users/login` | Login (com MFA se ativado) | público |
+| POST | `/api/users/login` | Login (MFA obrigatório para administradores) | público |
 | POST | `/api/users/logout` | Terminar sessão | autenticado |
-| POST | `/api/users/mfa/setup` | Iniciar MFA (gera QR otpauth) | autenticado |
-| POST | `/api/users/mfa/confirm` | Confirmar MFA | autenticado |
-| POST | `/api/users/mfa/disable` | Desativar MFA (exige código) | autenticado |
-| POST | `/api/users/password` | Alterar password (revoga sessões) | autenticado |
+| POST | `/api/users/mfa/setup` | Iniciar MFA (gera QR otpauth) | administrador autenticado |
+| POST | `/api/users/mfa/confirm` | Confirmar MFA | administrador autenticado |
 | POST | `/api/users/password-recovery-start` | Iniciar recuperação por email/SMS (resposta não revela se a conta existe) | público + rate limit |
 | POST | `/api/users/password-recovery-confirm` | Confirmar código e definir nova password; administrador usa TOTP | público + rate limit |
-| POST | `/api/users/panel-auth-start` | Enviar código de acesso de 6 dígitos por email/SMS | organizador autenticado |
-| POST | `/api/users/panel-auth-verify` | Validar OTP do organizador ou password + TOTP do administrador | autenticado |
-| POST | `/api/organizations/create` | Criar organização | autenticado |
+| POST | `/api/users/panel-auth-verify` | Confirmar password do organizador ou password + TOTP do administrador | autenticado |
+| POST | `/api/organizations/create` | Criar perfil de organizador (exige confirmação da password) | utilizador autenticado |
 | GET | `/api/organizations/members` | Listar membros | `org:manage` |
 | POST | `/api/organizations/members/invite` | Convidar membro | `org:invite` |
 | POST | `/api/organizations/members/accept` | Aceitar convite | autenticado |
@@ -126,8 +126,9 @@ npm run test:e2e          # arranca o dev server automaticamente
 | GET | `/api/events` | Listar eventos (`?status=`) | `event:read` |
 | GET | `/api/events/{id}` | Detalhe do evento | `event:read` |
 | PATCH | `/api/events/{id}` | Editar evento | `event:update` |
+| POST | `/api/events/upload-cover` | Carregar imagem JPEG, PNG ou WebP (máx. 5 MB; 20 carregamentos/hora) | `event:create` |
 | POST | `/api/events/{id}/sessions` | Adicionar sessão | `session:manage` |
-| POST | `/api/events/{id}/transition` | Transição de estado (por destino) | `event:publish` / `event:cancel` / `org:manage` |
+| POST | `/api/events/{id}/transition` | Transição de estado; publicar proposta exige administrador da plataforma | aprovação administrativa / `event:publish` / `event:cancel` / `org:manage` |
 | POST | `/api/events/venues` | Criar recinto | `venue:manage` |
 | POST | `/api/marketplace/availability` | Disponibilidade da sessão | público |
 | POST | `/api/marketplace/holds` | Criar reserva temporária | `order:create` |
@@ -167,9 +168,12 @@ npm run test:e2e          # arranca o dev server automaticamente
 
 - **Passwords:** hash com Argon2id; a aplicação não armazena passwords em texto simples.
 - **Sessões:** tokens opacos; apenas o hash do token é persistido. A sessão é transportada em cookie HttpOnly e pode ser revogada.
-- **MFA TOTP:** ativação, confirmação e desativação autenticadas. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
-- **Acesso reforçado ao painel:** administradores confirmam password + TOTP; organizadores confirmam código de utilização única por email/SMS.
-- **Recuperação de password:** utilizadores/organizadores elegíveis podem receber código por email ou SMS; o administrador recupera através do TOTP. Os códigos têm validade limitada, limite de tentativas e rate limiting. A resposta inicial não revela se uma conta está registada. A recuperação termina as sessões anteriores.
+- **Logout:** clientes, organizadores e administradores podem terminar a sessão pelo botão no cabeçalho/painel; o token da sessão é revogado no servidor.
+- **MFA TOTP:** obrigatório no login de administradores da plataforma, com código de seis dígitos da aplicação autenticadora. A ativação é exclusiva de administradores e o MFA administrativo não pode ser desativado. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
+- **Acesso reforçado ao painel:** administradores confirmam password + TOTP; organizadores confirmam novamente a password. Novos organizadores criam o perfil da organização ao submeter a primeira proposta.
+- **Propostas de evento:** qualquer utilizador autenticado pode criar um perfil de organizador e submeter eventos em rascunho. O painel lista os eventos criados pelo próprio utilizador; só a administração pode aprovar a publicação.
+- **País, moeda e capas:** a criação do perfil de organização disponibiliza países e moedas suportados pelo runtime. As capas são validadas e gravadas em `public/uploads/event-covers`; em produção, configure armazenamento persistente para esta pasta ou substitua-o por armazenamento de objetos.
+- **Recuperação de password:** iniciada a partir do login; utilizadores/organizadores elegíveis podem receber código por email ou SMS, e o administrador confirma com TOTP. Os códigos têm validade limitada, limite de tentativas e rate limiting. A resposta inicial não revela se uma conta está registada. A recuperação termina as sessões anteriores.
 - **Rate limiting:** limites persistentes no PostgreSQL, partilhados entre instâncias.
 - **Autorização:** permissões por organização (RBAC/ABAC), validação no servidor e segregação de funções em operações financeiras.
 - **Auditoria:** operações sensíveis são registadas; o livro-razão é corrigido por lançamentos compensatórios, não por edição de lançamentos confirmados.

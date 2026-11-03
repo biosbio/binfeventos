@@ -29,10 +29,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   try {
     if (path === "create") {
       const auth = await requireAuth();
-      const body = parseBody((await import("@/modules/organizations/schemas")).createOrgSchema, await req.json());
-      const { createOrganization } = await import("@/modules/organizations/service");
-      const org = await createOrganization(auth, body);
-      return NextResponse.json({ ok: true, organization: org }, { status: 201 });
+      const body = parseBody((await import("@/modules/organizations/schemas")).onboardOrganizerSchema, await req.json());
+      const { password, ...organizationInput } = body;
+      const { onboardOrganizer } = await import("@/modules/organizations/service");
+      const organization = await onboardOrganizer(auth, organizationInput, password);
+      return NextResponse.json({ ok: true, organization }, { status: 201 });
     }
 
     if (path === "members/invite") {
