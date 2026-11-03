@@ -25,3 +25,6 @@ Thumbs.db
 # Editores
 .vscode/
 .idea/
+
+# Credenciais locais de desenvolvimento
+.devcontainer/LOCAL-ADMIN-CREDENTIALS.txt
