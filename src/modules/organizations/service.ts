@@ -73,6 +73,9 @@ export async function inviteMember(
   input: InviteMemberInput
 ): Promise<{ membershipId: string; invitedEmail: string }> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (input.roleName === "PLATFORM_ADMIN") {
+    throw new ForbiddenError("platform-admin-role-cannot-be-assigned-to-members");
+  }
 
   // Papel alvo pode ser de sistema OU da própria organização
   const role = await prisma.role.findFirst({
@@ -143,6 +146,9 @@ export async function assignRole(
   roleName: string
 ): Promise<void> {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (roleName === "PLATFORM_ADMIN") {
+    throw new ForbiddenError("platform-admin-role-cannot-be-assigned-to-members");
+  }
 
   const role = await prisma.role.findFirst({
     where: {
@@ -156,18 +162,16 @@ export async function assignRole(
     throw new ForbiddenError("role-from-other-org");
   }
 
-  const membership = await prisma.orgMembership.update({
-    where: { id: memberId },
+  // O filtro de organização faz parte da própria escrita. Nunca alterar
+  // primeiro um membro de outra organização e só depois rejeitar a operação.
+  const updated = await prisma.orgMembership.updateMany({
+    where: { id: memberId, organizationId: ctx.organizationId },
     data: { roleId: role.id },
   });
-
-  // Isolamento: só altera papéis DENTRO da organização do contexto
-  if (membership.organizationId !== ctx.organizationId) {
-    throw new ForbiddenError("membership-from-other-org");
-  }
+  if (updated.count !== 1) throw new NotFoundError("Membro");
 
   await writeAudit({
-    organizationId: membership.organizationId,
+    organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "org.member_role_changed",
     after: { memberId, roleName },

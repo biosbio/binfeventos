@@ -40,7 +40,9 @@ describe("MulticaixaExpressAdapter.initiate", () => {
         adapterConfig: { baseUrl: "https://api.emis.ao/v1", merchantToken: "tok", posId: "123" },
       });
       expect(r.status).toBe("INITIATED");
-      expect(r.providerRef).toBe("mcx-ref-1");
+      // O gateway devolve um ID interno; a referência enviada por nós é a
+      // chave idempotente, que também deve chegar no webhook.
+      expect(r.providerRef).toBe("key-1234567890abcdef");
       expect(r.redirectUrl).toContain("multicaixaexpress.ao");
     } finally {
       global.fetch = originalFetch;

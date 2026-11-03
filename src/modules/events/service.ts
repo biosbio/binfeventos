@@ -24,12 +24,17 @@ import type { CreateEventInput, SessionInput, VenueInput } from "./schemas";
 
 /** Busca evento FORÇANDO o escopo da organização (SEC-02 ABAC). */
 async function scopedEvent(ctx: AuthContext, eventId: string) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: { sessions: true },
   });
-  if (!event || event.organizationId !== ctx.organizationId) {
+  // Administrador da plataforma pode aprovar publicação globalmente.
+  // Todos os restantes continuam estritamente limitados à organização da sessão.
+  if (
+    !event ||
+    (ctx.platformRole !== "PLATFORM_ADMIN" &&
+      (!ctx.organizationId || event.organizationId !== ctx.organizationId))
+  ) {
     throw new NotFoundError("Evento"); // neutro: não revela existência em outra org
   }
   return event;
@@ -120,8 +125,25 @@ export async function transitionEvent(
   eventId: string,
   to: EventStatus
 ) {
+  if (
+    ctx.platformRole === "PLATFORM_ADMIN" &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
   const event = await scopedEvent(ctx, eventId);
   const from = event.status;
+
+  // Defesa em profundidade: mesmo que uma rota seja alterada por engano,
+  // nenhum organizador consegue publicar diretamente um evento.
+  if (to === "PUBLISHED") {
+    if (ctx.platformRole !== "PLATFORM_ADMIN") {
+      throw new ForbiddenError("admin-publication-approval-required");
+    }
+    if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
+      throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+    }
+  }
 
   if (from === to) throw new ConflictError(`Evento já está ${transitionLabel(to)}.`);
   if (!canTransition(from, to)) {
@@ -256,10 +278,12 @@ export async function createVenue(ctx: AuthContext, input: VenueInput) {
 
 /** Listar eventos da organização (isolamento por contexto). */
 export async function listEvents(ctx: AuthContext, status?: EventStatus) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (!ctx.organizationId && ctx.platformRole !== "PLATFORM_ADMIN") {
+    throw new ForbiddenError("no-active-organization");
+  }
   return prisma.event.findMany({
     where: {
-      organizationId: ctx.organizationId,
+      ...(ctx.platformRole === "PLATFORM_ADMIN" ? {} : { organizationId: ctx.organizationId! }),
       ...(status && { status }),
     },
     select: {

@@ -38,8 +38,8 @@ export const boxOfficeSaleSchema = z.object({
       z.object({
         ticketTypeId: z.string().uuid(),
         fullName: z.string().trim().min(3).max(120),
-        documentType: z.string().trim().max(30).optional(),
-        documentNumber: z.string().trim().max(40).optional(),
+        documentType: z.string().trim().min(2).max(30),
+        documentNumber: z.string().trim().min(4).max(40),
       })
     )
     .min(1),

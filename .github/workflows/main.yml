@@ -19,17 +19,59 @@ jobs:
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/binf_test?schema=public
-      SANDBOX_WEBHOOK_SECRET: ci-secret-4f7a
       ADMIN_EMAIL: admin@binf.local
-      ADMIN_PASSWORD: CiAdmin!2026x
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: npm
-      - run: npm ci
+      - name: Install dependencies with npm 11
+        run: npx --yes npm@11 ci --no-audit --no-fund
+      - name: Generate ephemeral CI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          SANDBOX_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+          ADMIN_PASSWORD="Ci$(openssl rand -hex 20)A1!"
+          # Generate a real RFC 4648 Base32 secret for TOTP.
+          ADMIN_MFA_SECRET="$(node <<'NODE'
+          const { randomBytes } = require("node:crypto");
+          const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+          const bytes = randomBytes(20);
+          let bits = 0;
+          let value = 0;
+          let output = "";
+          for (const byte of bytes) {
+            value = (value << 8) | byte;
+            bits += 8;
+            while (bits >= 5) {
+              output += alphabet[(value >>> (bits - 5)) & 31];
+              bits -= 5;
+            }
+          }
+          if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+          process.stdout.write(output);
+          NODE
+          )"
+          MFA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+          SESSION_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$DATABASE_URL"
+          echo "::add-mask::$SANDBOX_WEBHOOK_SECRET"
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "::add-mask::$ADMIN_MFA_SECRET"
+          echo "::add-mask::$MFA_ENCRYPTION_KEY"
+          echo "::add-mask::$SESSION_SECRET"
+          echo "SANDBOX_WEBHOOK_SECRET=$SANDBOX_WEBHOOK_SECRET" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "ADMIN_MFA_SECRET=$ADMIN_MFA_SECRET" >> "$GITHUB_ENV"
+          echo "MFA_ENCRYPTION_KEY=$MFA_ENCRYPTION_KEY" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$SESSION_SECRET" >> "$GITHUB_ENV"
+      - run: npm audit --audit-level=moderate
       - run: npx prisma generate
+      - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npm run db:seed
       - run: npm run typecheck

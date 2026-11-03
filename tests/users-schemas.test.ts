@@ -8,6 +8,8 @@ import {
 // Testes de caracterização dos schemas (SEC-09: validação no servidor)
 // Requer apenas o pacote zod — sem base de dados.
 
+const validPhone = "+245955123456";
+
 describe("passwordSchema", () => {
   it("aceita password forte (12+, minúscula, maiúscula, número)", () => {
     expect(passwordSchema.safeParse("SenhaF0rte2026").success).toBe(true);
@@ -31,14 +33,41 @@ describe("registerSchema", () => {
     const result = registerSchema.parse({
       fullName: "Ana Silva",
       email: "Ana.Silva@Example.COM",
+      phone: validPhone,
       password: "SenhaF0rte2026",
     });
     expect(result.email).toBe("ana.silva@example.com");
   });
 
+  it("rejeita cadastro sem telemóvel", () => {
+    expect(
+      registerSchema.safeParse({
+        fullName: "Ana Silva",
+        email: "ana@example.com",
+        password: "SenhaF0rte2026",
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejeita telemóvel sem indicativo internacional", () => {
+    expect(
+      registerSchema.safeParse({
+        fullName: "Ana Silva",
+        email: "ana@example.com",
+        phone: "955123456",
+        password: "SenhaF0rte2026",
+      }).success
+    ).toBe(false);
+  });
+
   it("rejeita nome curto", () => {
     expect(
-      registerSchema.safeParse({ fullName: "An", email: "a@b.co", password: "SenhaF0rte2026" }).success
+      registerSchema.safeParse({
+        fullName: "An",
+        email: "a@b.co",
+        phone: validPhone,
+        password: "SenhaF0rte2026",
+      }).success
     ).toBe(false);
   });
 });

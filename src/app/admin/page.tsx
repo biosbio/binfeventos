@@ -19,7 +19,7 @@ export default async function AdminDashboardPage() {
         <div className="panel"><div className="price-label">Eventos</div><div className="price">{events}</div></div>
         <div className="panel"><div className="price-label">Rascunhos</div><div className="price">{pendingEvents}</div></div>
       </div>
-      <p className="form-help">Ações administrativas de aprovação e gestão serão disponibilizadas nos respetivos módulos.</p>
+      <div className="admin-dashboard-actions"><Link className="button button-primary" href="/admin/users">Gerir utilizadores</Link><Link className="button button-secondary" href="/minha-conta/seguranca">Segurança da conta</Link></div>
     </main>
   );
 }

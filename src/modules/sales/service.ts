@@ -1,11 +1,13 @@
+import { randomBytes } from "crypto";
 import { prisma } from "@/shared/lib/prisma";
 import {
+  AppError,
   BusinessRuleError,
   ConflictError,
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import type { CreateOrderInput } from "./schemas";
@@ -31,11 +33,10 @@ const SERVICE_FEE_BPS = 500; // 5,00%
 /** Comissão da plataforma (%) — modelo combinado aprovado. */
 const COMMISSION_BPS = 800; // 8,00%
 
-/** Gera número de encomenda legível (server-side, sequencial por tentativa). */
-async function nextOrderNumber(): Promise<string> {
-  const count = await prisma.order.count();
+/** Gera número de encomenda legível e resistente a concorrência. */
+function nextOrderNumber(): string {
   const year = new Date().getFullYear();
-  return `BINF-${year}-${String(count + 1).padStart(8, "0")}`;
+  return `BINF-${year}-${randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
 /**
@@ -56,28 +57,60 @@ export async function createOrder(
   commissionCents: number;
   status: string;
 }> {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-  const organizationId = ctx.organizationId;
-
   const idempotencyKey = input.checkoutIdempotencyKey ?? generateIdempotencyKey();
 
   // Idempotência: devolve a encomenda existente se a chave já foi usada
   const existing = await prisma.order.findUnique({
     where: { checkoutIdempotencyKey: idempotencyKey },
     select: {
-      id: true, organizationId: true, orderNumber: true, totalCents: true, currency: true,
+      id: true, organizationId: true, buyerUserId: true, orderNumber: true, totalCents: true, currency: true,
       subtotalCents: true, serviceFeeCents: true, taxCents: true,
       commissionCents: true, status: true,
     },
   });
   if (existing) {
-    if (existing.organizationId !== organizationId) throw new ConflictError("Chave de checkout já utilizada.");
+    const isBuyer = existing.buyerUserId === ctx.userId;
+    const isOrgOperator =
+      ctx.organizationId === existing.organizationId && ctx.permissions.has("order:read");
+    if (!isBuyer && !isOrgOperator) throw new ForbiddenError("checkout-idempotency-key-not-owned");
+    if (
+      isOrgOperator &&
+      (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+    ) {
+      throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+    }
     return { orderId: existing.id, orderNumber: existing.orderNumber, totalCents: existing.totalCents, currency: existing.currency, subtotalCents: existing.subtotalCents, serviceFeeCents: existing.serviceFeeCents, taxCents: existing.taxCents, commissionCents: existing.commissionCents, status: existing.status };
   }
 
-  // Hold válido da organização do contexto
+  // Hold pertencente ao comprador ou operado pela bilheteira da mesma organização.
   const hold = await prisma.inventoryHold.findUnique({ where: { id: input.holdId } });
-  if (!hold || hold.organizationId !== ctx.organizationId) throw new NotFoundError("Reserva");
+  if (!hold) throw new NotFoundError("Reserva");
+  const isBuyer = hold.userId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === hold.organizationId && ctx.permissions.has("boxoffice:sell");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("hold-not-owned");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
+  const organizationId = hold.organizationId;
+  await assertOrgActive(organizationId);
+  let buyerUserId: string | null = ctx.userId;
+  if (isOrgOperator) {
+    const actor = await prisma.user.findUnique({
+      where: { id: ctx.userId },
+      select: { email: true },
+    });
+    const purchaserEmail = (input.buyerEmail ?? input.attendees[0]?.email)?.trim().toLowerCase();
+    if (!purchaserEmail || purchaserEmail !== actor?.email.toLowerCase()) {
+      const purchaser = purchaserEmail
+        ? await prisma.user.findUnique({ where: { email: purchaserEmail }, select: { id: true } })
+        : null;
+      buyerUserId = purchaser?.id ?? null;
+    }
+  }
   if (hold.status !== "RESERVED") {
     throw new ConflictError(`Reserva em estado ${hold.status}.`);
   }
@@ -100,7 +133,7 @@ export async function createOrder(
   const attendeesForType = input.attendees.filter(
     (a) => a.ticketTypeId === hold.ticketTypeId
   );
-  if (attendeesForType.length !== hold.quantity) {
+  if (input.attendees.length !== hold.quantity || attendeesForType.length !== hold.quantity) {
     throw new BusinessRuleError(
       `São necessários ${hold.quantity} titulares identificados para este tipo de bilhete.`
     );
@@ -128,8 +161,8 @@ export async function createOrder(
     const created = await tx.order.create({
       data: {
         organizationId,
-        orderNumber: await nextOrderNumber(),
-        buyerUserId: ctx.userId,
+        orderNumber: nextOrderNumber(),
+        buyerUserId,
         buyerName: input.buyerName,
         buyerEmail: input.buyerEmail,
         buyerPhone: input.buyerPhone ?? null,
@@ -175,17 +208,26 @@ export async function createOrder(
       });
     }
 
-    // Hold passa a pendente de pagamento (inventário segue protegido)
-    await tx.inventoryHold.update({
-      where: { id: hold.id },
+    // Claim atómico do hold: duas compras concorrentes não podem
+    // converter a mesma reserva em duas encomendas.
+    const consumedHold = await tx.inventoryHold.updateMany({
+      where: {
+        id: hold.id,
+        organizationId,
+        status: "RESERVED",
+        expiresAt: { gt: new Date() },
+      },
       data: { status: "PENDING_PAYMENT" },
     });
+    if (consumedHold.count !== 1) {
+      throw new ConflictError("Reserva já consumida ou expirada. Recomece a compra.");
+    }
 
     return created;
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId,
     actorUserId: ctx.userId,
     action: "order.created",
     after: sanitizeForAudit({
@@ -211,29 +253,79 @@ export async function createOrder(
 
 /** Cancelar encomenda antes do pagamento (liberta o hold). */
 export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<void> {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-
   const order = await prisma.order.findUnique({ where: { id: orderId } });
-  if (!order || order.organizationId !== ctx.organizationId) throw new NotFoundError("Encomenda");
-  if (order.buyerUserId !== ctx.userId && !ctx.permissions.has("order:cancel")) {
-    throw new ForbiddenError("order:cancel");
+  if (!order) throw new NotFoundError("Encomenda");
+  const isBuyer = order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === order.organizationId && ctx.permissions.has("order:cancel");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("order:cancel");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   if (!["DRAFT", "RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
     throw new ConflictError(`Encomenda em estado ${order.status} não pode ser cancelada aqui.`);
   }
+  const uncertainPayment = await prisma.payment.findFirst({
+    where: {
+      orderId: order.id,
+      status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+    },
+    select: { id: true },
+  });
+  if (uncertainPayment) {
+    throw new BusinessRuleError("Pagamento em curso ou em revisão. O cancelamento fica bloqueado até decisão financeira.");
+  }
 
   await prisma.$transaction(async (tx) => {
-    await tx.order.update({
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
+    const freshOrder = await tx.order.findUnique({
       where: { id: order.id },
+      select: { status: true, holdId: true, organizationId: true },
+    });
+    if (
+      !freshOrder ||
+      freshOrder.organizationId !== order.organizationId ||
+      !["DRAFT", "RESERVED", "PENDING_PAYMENT"].includes(freshOrder.status)
+    ) {
+      throw new ConflictError("A encomenda mudou de estado e já não pode ser cancelada.");
+    }
+    const activePayment = await tx.payment.findFirst({
+      where: {
+        orderId: order.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
+      select: { id: true },
+    });
+    if (activePayment) {
+      throw new BusinessRuleError("Pagamento em curso ou em revisão. O cancelamento fica bloqueado até decisão financeira.");
+    }
+
+    const cancelled = await tx.order.updateMany({
+      where: {
+        id: order.id,
+        organizationId: order.organizationId,
+        status: { in: ["DRAFT", "RESERVED", "PENDING_PAYMENT"] },
+      },
       data: { status: "CANCELLED", cancelledAt: new Date() },
     });
+    if (cancelled.count !== 1) {
+      throw new ConflictError("A encomenda mudou de estado e já não pode ser cancelada.");
+    }
 
-    if (order.holdId) {
+    if (freshOrder.holdId) {
       const hold = await tx.inventoryHold.findUnique({
-        where: { id: order.holdId },
+        where: { id: freshOrder.holdId },
         select: { status: true, quantity: true, sessionId: true, ticketTypeId: true, batchId: true },
       });
-      if (hold && hold.status === "PENDING_PAYMENT") {
+      if (hold && ["RESERVED", "PENDING_PAYMENT"].includes(hold.status)) {
+        const released = await tx.inventoryHold.updateMany({
+          where: { id: freshOrder.holdId, status: hold.status },
+          data: { status: "CANCELLED", releasedAt: new Date() },
+        });
+        if (released.count !== 1) throw new ConflictError("A reserva já foi alterada.");
         await tx.ticketInventory.update({
           where: {
             sessionId_ticketTypeId_batchId: {
@@ -244,16 +336,12 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
           },
           data: { reservedQuantity: { decrement: hold.quantity } },
         });
-        await tx.inventoryHold.update({
-          where: { id: order.holdId },
-          data: { status: "CANCELLED", releasedAt: new Date() },
-        });
       }
     }
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: order.organizationId,
     actorUserId: ctx.userId,
     action: "order.cancelled",
     before: { status: order.status },
@@ -263,7 +351,6 @@ export async function cancelOrder(ctx: AuthContext, orderId: string): Promise<vo
 
 /** Consulta de encomenda do próprio comprador (isolamento). */
 export async function getOrder(ctx: AuthContext, orderId: string) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -271,9 +358,16 @@ export async function getOrder(ctx: AuthContext, orderId: string) {
       attendees: { select: { fullName: true, ticketTypeId: true } },
     },
   });
-  if (!order || order.organizationId !== ctx.organizationId) throw new NotFoundError("Encomenda");
-  if (order.buyerUserId !== ctx.userId && !ctx.permissions.has("order:read")) {
-    throw new ForbiddenError("order:read");
+  if (!order) throw new NotFoundError("Encomenda");
+  const isBuyer = order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === order.organizationId && ctx.permissions.has("order:read");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("order:read");
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   return order;
 }

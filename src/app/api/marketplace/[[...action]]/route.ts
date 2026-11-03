@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError, NotFoundError } from "@/shared/errors";
-import { requireAuth, requirePermission } from "@/shared/auth";
+import { requireAuth } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -18,10 +18,12 @@ import { z } from "zod";
 
 const UUID = z.string().uuid();
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
@@ -44,7 +46,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "holds") {
-      const auth = await requirePermission("order:create");
+      const auth = await requireAuth();
       const body = parse((await import("@/modules/inventory/schemas")).holdRequestSchema, await req.json());
       const { createHold } = await import("@/modules/inventory/service");
       const hold = await createHold(auth, body);
@@ -60,7 +62,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "orders") {
-      const auth = await requirePermission("order:create");
+      const auth = await requireAuth();
       const body = parse((await import("@/modules/sales/schemas")).createOrderSchema, await req.json());
       const { createOrder } = await import("@/modules/sales/service");
       const order = await createOrder(auth, body);
@@ -86,9 +88,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
   const { action = [] } = await ctx.params;
 
   try {
-    if (action.length === 1) {
+    if (action.length === 2 && action[0] === "orders") {
       const auth = await requireAuth();
-      const orderId = parse(UUID, action[0]);
+      const orderId = parse(UUID, action[1]);
       const { getOrder } = await import("@/modules/sales/service");
       const order = await getOrder(auth, orderId);
       return NextResponse.json({ ok: true, order });

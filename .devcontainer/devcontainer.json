@@ -4,7 +4,12 @@
   "service": "app",
   "workspaceFolder": "/workspaces/binfeventos",
   "shutdownAction": "stopCompose",
-  "forwardPorts": [3000, 5432],
+
+  "forwardPorts": [
+    3000,
+    5432
+  ],
+
   "portsAttributes": {
     "3000": {
       "label": "BINF EVENTOS",
@@ -18,7 +23,12 @@
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "customizations": {
     "vscode": {
-      "extensions": ["Prisma.prisma", "dbaeumer.vscode-eslint"]
+
+      "extensions": [
+        "Prisma.prisma",
+        "dbaeumer.vscode-eslint"
+      ]
+
     }
   },
   "postStartCommand": "bash -lc 'nohup npm run dev > /tmp/binf-eventos-next.log 2>&1 &'"

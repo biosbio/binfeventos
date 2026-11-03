@@ -15,10 +15,10 @@ export const validateQrSchema = z.object({
 export const issueTransferSchema = z.object({
   ticketId: z.string().uuid(),
   newHolderFullName: z.string().trim().min(3).max(120),
-  newHolderEmail: z.string().trim().toLowerCase().email().optional(),
+  newHolderEmail: z.string().trim().toLowerCase().email(),
   newHolderPhone: z.string().trim().min(7).max(20).optional(),
-  newHolderDocumentType: z.string().trim().max(30).optional(),
-  newHolderDocumentNumber: z.string().trim().max(40).optional(),
+  newHolderDocumentType: z.string().trim().min(2).max(30),
+  newHolderDocumentNumber: z.string().trim().min(4).max(40),
 });
 
 export const approveTransferSchema = z.object({

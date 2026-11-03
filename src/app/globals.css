@@ -221,3 +221,32 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .organizer-benefits h2 { max-width: 460px; margin: 10px 0 0; font-size: clamp(30px,4vw,44px); letter-spacing: -.05em; }
 .organizer-benefits > p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
 @media(max-width:850px) { .organizer-hero-grid,.organizer-benefits { grid-template-columns: 1fr; gap: 30px; } .organizer-hero { padding: 58px 0; } }
+
+.admin-dashboard-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.admin-user-filters { display: grid; grid-template-columns: minmax(220px,1fr) 190px auto auto; align-items: end; gap: 12px; margin: 25px 0 12px; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+.admin-user-filters .form-field { margin: 0; }
+.admin-user-filters input, .admin-user-filters select, .admin-user-edit input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #d7dfd8; border-radius: 10px; background: #fbfcfa; color: var(--ink); }
+.admin-users-list { display: grid; gap: 13px; }
+.admin-user-card { display: grid; gap: 17px; }
+.admin-user-main { display: flex; justify-content: space-between; align-items: start; gap: 18px; }
+.admin-user-main strong { font-size: 16px; }
+.admin-user-badges, .admin-user-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.admin-user-memberships { display: grid; gap: 5px; padding-top: 13px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.admin-user-memberships strong { color: var(--ink); font-size: 12px; }
+.admin-user-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.admin-user-edit .form-field { margin: 0; }
+.admin-user-edit .admin-user-actions { grid-column: 1 / -1; }
+@media(max-width:700px) {
+  .admin-user-filters { grid-template-columns: 1fr 1fr; }
+  .admin-user-main { flex-direction: column; }
+  .admin-user-edit { grid-template-columns: 1fr; }
+  .admin-user-edit .admin-user-actions { grid-column: auto; }
+}
+
+.account-security-link { margin: 18px 0 8px; }
+.account-security-page { padding: 48px 0 72px; max-width: 760px; }
+.account-security-page h1 { margin: 10px 0 8px; font-size: clamp(34px,4vw,48px); letter-spacing: -.05em; }
+.account-password-form { display: grid; gap: 14px; margin-top: 26px; }
+.account-password-form .form-field { margin: 0; }
+
+.dashboard-heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

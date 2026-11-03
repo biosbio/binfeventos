@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ValidationError } from "@/shared/errors";
+import { z } from "zod";
+import { errorResponse, ValidationError, ForbiddenError, NotFoundError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
 
 // ============================================================
@@ -7,14 +8,17 @@ import { requireAuth, requirePermission } from "@/shared/auth";
 //   POST /api/access/validate            — validar QR na portaria
 //   POST /api/access/transfer            — solicitar transferência (titular)
 //   POST /api/access/transfer/decide      — aprovar/rejeitar (transfer:approve)
+//   GET  /api/access/my-tickets           — bilhetes do titular autenticado
 //   GET  /api/access/tickets/{id}/qr     — reobter token QR (rotação)
 //   POST /api/access/gates               — criar porta (gate:manage)
 // ============================================================
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
@@ -52,7 +56,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const auth = await requirePermission("gate:manage");
       const body = parse((await import("@/modules/access/schemas")).createGateSchema, await req.json());
       const { prisma } = await import("@/shared/lib/prisma");
-      if (!auth.organizationId) throw new Error("no-active-organization");
+      if (!auth.organizationId) throw new ForbiddenError("no-active-organization");
+
+      const venue = await prisma.venue.findFirst({
+        where: { id: body.venueId, organizationId: auth.organizationId },
+        select: { id: true },
+      });
+      if (!venue) throw new NotFoundError("Recinto");
+
+      if (body.sessionId) {
+        const session = await prisma.eventSession.findUnique({
+          where: { id: body.sessionId },
+          include: { event: { select: { organizationId: true } } },
+        });
+        if (
+          !session ||
+          session.event.organizationId !== auth.organizationId ||
+          session.venueId !== body.venueId
+        ) {
+          throw new NotFoundError("Sessão/recinto");
+        }
+      }
+
       const gate = await prisma.accessGate.create({
         data: {
           organizationId: auth.organizationId,
@@ -78,11 +103,18 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
   const { action = [] } = await ctx.params;
 
   try {
+    if (action.length === 1 && action[0] === "my-tickets") {
+      const auth = await requireAuth();
+      const { listMyTickets } = await import("@/modules/access/service");
+      return NextResponse.json({ ok: true, tickets: await listMyTickets(auth) });
+    }
+
     // GET /api/access/tickets/{id}/qr
     if (action.length === 3 && action[0] === "tickets" && action[2] === "qr") {
       const auth = await requireAuth();
+      const ticketId = parse(z.string().uuid(), action[1]);
       const { getQrToken } = await import("@/modules/access/service");
-      const token = await getQrToken(auth, action[1]!);
+      const token = await getQrToken(auth, ticketId);
       return NextResponse.json({ ok: true, qrToken: token });
     }
 

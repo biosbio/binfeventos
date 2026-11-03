@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, ValidationError, NotFoundError } from "@/shared/errors";
-import { requirePermission } from "@/shared/auth";
+import { errorResponse, ValidationError, NotFoundError, ForbiddenError } from "@/shared/errors";
+import { requireAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -16,14 +16,16 @@ import { z } from "zod";
 
 const UUID = z.string().uuid();
 const statusSchema = z.enum([
-  "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
+  "DRAFT", "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
 ]);
 const transitionSchema = z.object({ to: statusSchema });
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
@@ -67,9 +69,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const eventId = parse(UUID, action[0]);
       const body = parse(transitionSchema, await req.json());
 
-      // Permissão conforme o destino:
-      // publish/sold_out -> event:publish; cancel/postpone -> event:cancel
-      if (["PUBLISHED", "SUSPENDED", "SOLD_OUT"].includes(body.to)) {
+      // O administrador central gere todas as decisões de estado de qualquer
+      // organização; o step-up TOTP é sempre exigido no painel administrativo.
+      const current = await requireAuth();
+      if (current.platformRole === "PLATFORM_ADMIN") {
+        const auth = await requirePermission("admin:platform");
+        const { transitionEvent } = await import("@/modules/events/service");
+        return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
+      }
+      // A publicação pública nunca pode ser executada pelo organizador.
+      if (body.to === "PUBLISHED") {
+        throw new ForbiddenError("admin-publication-approval-required");
+      }
+      if (["SUSPENDED", "SOLD_OUT"].includes(body.to)) {
         const auth = await requirePermission("event:publish");
         const { transitionEvent } = await import("@/modules/events/service");
         return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
@@ -121,7 +133,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ action?: st
   try {
     // GET /api/events (lista, filtro opcional ?status=PUBLISHED)
     if (action.length === 0) {
-      const auth = await requirePermission("event:read");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("event:read");
       const { listEvents } = await import("@/modules/events/service");
       const statusParam = url.searchParams.get("status");
       const status = statusParam ? parse(statusSchema, statusParam) : undefined;
@@ -132,7 +147,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ action?: st
     // GET /api/events/{id}
     if (action.length === 1) {
       const eventId = parse(UUID, action[0]);
-      const auth = await requirePermission("event:read");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("event:read");
       const { getEvent } = await import("@/modules/events/service");
       const event = await getEvent(auth, eventId);
       return NextResponse.json({ ok: true, event });

@@ -7,7 +7,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
 import { getAdapter, type ProviderResultStatus } from "./adapter";
@@ -44,15 +44,35 @@ const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
 
 /** Iniciar pagamento: cria/atualiza Payment + nova tentativa (Opção B). */
 export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentInput) {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-
   const order = await prisma.order.findUnique({ where: { id: input.orderId } });
-  if (!order || order.organizationId !== ctx.organizationId) throw new NotFoundError("Encomenda");
-  if (order.buyerUserId !== ctx.userId && !ctx.permissions.has("boxoffice:sell")) {
-    throw new ForbiddenError("not-buyer");
+  if (!order) throw new NotFoundError("Encomenda");
+  const isBuyer = order.buyerUserId === ctx.userId;
+  const isOrgOperator =
+    ctx.organizationId === order.organizationId && ctx.permissions.has("boxoffice:sell");
+  if (!isBuyer && !isOrgOperator) throw new ForbiddenError("not-buyer");
+  await assertOrgActive(order.organizationId);
+  if (
+    isOrgOperator &&
+    (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now())
+  ) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
   }
   if (order.status !== "RESERVED" && order.status !== "PENDING_PAYMENT") {
     throw new ConflictError(`Encomenda em estado ${order.status}.`);
+  }
+  if (order.holdId) {
+    const hold = await prisma.inventoryHold.findUnique({
+      where: { id: order.holdId },
+      select: { status: true, organizationId: true, expiresAt: true },
+    });
+    if (
+      !hold ||
+      hold.organizationId !== order.organizationId ||
+      hold.expiresAt <= new Date() ||
+      !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(hold.status)
+    ) {
+      throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
+    }
   }
 
   const provider = await prisma.paymentProvider.findUnique({
@@ -61,100 +81,274 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(provider.code);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador do prestador não instalado.");
+  if (provider.code === "multicaixa-express" && order.currency !== "AOA") {
+    throw new BusinessRuleError("Multicaixa Express só aceita encomendas em AOA.");
+  }
 
-  // Idempotência da tentativa
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
   const existingAttempt = await prisma.paymentAttempt.findUnique({
     where: { idempotencyKey: attemptKey },
+    include: { payment: { select: { id: true, orderId: true, organizationId: true, providerId: true } } },
   });
   if (existingAttempt) {
+    if (
+      existingAttempt.payment.orderId !== order.id ||
+      existingAttempt.payment.organizationId !== order.organizationId ||
+      existingAttempt.payment.providerId !== provider.id
+    ) {
+      throw new ConflictError("Chave de idempotência de pagamento já utilizada.");
+    }
     return { paymentId: existingAttempt.paymentId, alreadyStarted: true };
   }
 
-  // Payment da encomenda (um por prestador; tentativas dentro dele)
-  let payment = await prisma.payment.findFirst({
-    where: { orderId: order.id, providerId: provider.id },
-  });
-  if (!payment) {
-    payment = await prisma.payment.create({
-      data: {
-        organizationId: order.organizationId,
-        orderId: order.id,
-        providerId: provider.id,
-        method: input.method,
-        status: "CREATED",
-        // Valor SEMPRE da encomenda (server-side); cliente não envia montante
-        amountCents: order.totalCents,
-        currency: order.currency,
-      },
+  // Um pagamento por encomenda/prestador; o advisory lock evita duas linhas
+  // concorrentes e a claim bloqueia uma segunda tentativa enquanto a primeira decorre.
+  const payment = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
+    const freshOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { status: true, holdId: true, organizationId: true },
     });
-  }
+    if (
+      !freshOrder ||
+      !["RESERVED", "PENDING_PAYMENT"].includes(freshOrder.status) ||
+      freshOrder.organizationId !== order.organizationId
+    ) {
+      throw new ConflictError("A encomenda foi alterada antes da iniciação do pagamento.");
+    }
+    if (freshOrder.holdId) {
+      const freshHold = await tx.inventoryHold.findUnique({
+        where: { id: freshOrder.holdId },
+        select: { status: true, organizationId: true, expiresAt: true },
+      });
+      if (
+        !freshHold ||
+        freshHold.organizationId !== order.organizationId ||
+        freshHold.expiresAt <= new Date() ||
+        !["RESERVED", "PENDING_PAYMENT", "VERIFYING"].includes(freshHold.status)
+      ) {
+        throw new BusinessRuleError("A reserva de inventário já não está ativa para pagamento.");
+      }
+    }
+    const lockKey = `payment-init:${order.id}:${provider.id}`;
+    await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0)) IS NULL AS locked
+    `;
+    let current = await tx.payment.findFirst({
+      where: { orderId: order.id, providerId: provider.id },
+    });
+    const otherActivePayment = await tx.payment.findFirst({
+      where: {
+        orderId: order.id,
+        status: { in: ["INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+        ...(current ? { id: { not: current.id } } : {}),
+      },
+      select: { id: true },
+    });
+    if (otherActivePayment) {
+      throw new ConflictError("Já existe um pagamento ativo para esta encomenda noutro prestador.");
+    }
+    if (!current) {
+      current = await tx.payment.create({
+        data: {
+          organizationId: order.organizationId,
+          orderId: order.id,
+          providerId: provider.id,
+          method: input.method,
+          status: "CREATED",
+          amountCents: order.totalCents,
+          currency: order.currency,
+        },
+      });
+    }
+    const claimed = await tx.payment.updateMany({
+      where: {
+        id: current.id,
+        status: { in: ["CREATED", "DECLINED", "CANCELLED", "EXPIRED"] },
+      },
+      data: { status: "INITIATED" },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictError("Já existe uma tentativa de pagamento em curso ou em revisão.");
+    }
+    // Bloqueia tentativas anteriores antes de chamar novamente o prestador.
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: current.id, status: "ACTIVE" },
+      data: { status: "BLOCKED", finishedAt: new Date() },
+    });
+    const orderClaim = await tx.order.updateMany({
+      where: { id: order.id, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+      data: { status: "PENDING_PAYMENT" },
+    });
+    if (orderClaim.count !== 1) {
+      throw new ConflictError("A encomenda foi alterada antes da iniciação do pagamento.");
+    }
+    if (freshOrder.holdId) {
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: {
+          id: freshOrder.holdId,
+          organizationId: order.organizationId,
+          status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+        },
+        data: { status: "PENDING_PAYMENT" },
+      });
+      if (holdClaim.count !== 1) {
+        throw new BusinessRuleError("A reserva de inventário deixou de estar ativa.");
+      }
+    }
+    return current;
+  });
 
-  const nextAttemptNumber =
-    (await prisma.paymentAttempt.count({ where: { paymentId: payment.id } })) + 1;
-
-  // Chama o adaptador (configuração resolvida no backend)
-  const result = await adapter.initiate({
+  // Se o adaptador falhar, o resultado pode ser incerto. Mantém o inventário
+  // protegido até revisão manual em vez de libertar uma venda possivelmente paga.
+  let result: Awaited<ReturnType<typeof adapter.initiate>>;
+  try {
+    result = await adapter.initiate({
     paymentId: payment.id,
     amountCents: order.totalCents,
     currency: order.currency,
     returnUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/checkout/return?order=${order.id}`,
     idempotencyKey: attemptKey,
     adapterConfig: (provider.adapterConfig ?? {}) as Record<string, unknown>,
-  });
+    });
+  } catch {
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: "INITIATED" },
+        data: { status: "UNDER_REVIEW" },
+      });
+      if (order.holdId) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            organizationId: order.organizationId,
+            status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: { status: "VERIFYING" },
+        });
+      }
+    });
+    await writeAudit({
+      organizationId: order.organizationId,
+      actorUserId: ctx.userId,
+      action: "payment.initiation_uncertain",
+      after: sanitizeForAudit({ paymentId: payment.id, provider: provider.code }),
+    });
+    throw new AppError("PAYMENT_PROVIDER_UNCERTAIN", 502, "Não foi possível confirmar a resposta do prestador. O pagamento ficou em revisão.");
+  }
 
   const paymentId = payment.id;
-  await prisma.$transaction(async (tx) => {
-    // Opção B: nova tentativa bloqueia as anteriores ativas
+  const statusFromProvider = PROVIDER_STATUS_MAP[result.status] as never;
+  const terminalDecline = ["DECLINED", "CANCELLED", "EXPIRED"].includes(result.status);
+  const attached = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${paymentId}::uuid FOR UPDATE`;
+    const attemptNumber = (await tx.paymentAttempt.count({ where: { paymentId } })) + 1;
+    const freshPayment = await tx.payment.findUnique({
+      where: { id: paymentId },
+      select: { status: true },
+    });
+    if (!freshPayment || freshPayment.status !== "INITIATED") {
+      // Outra confirmação/revisão ganhou a corrida enquanto o prestador respondia.
+      // Regista esta tentativa como bloqueada; um callback posterior vai para revisão.
+      await tx.paymentAttempt.create({
+        data: {
+          paymentId,
+          attemptNumber,
+          status: "BLOCKED",
+          finishedAt: new Date(),
+          idempotencyKey: attemptKey,
+          providerRef: result.providerRef,
+          notes: "Resposta recebida após alteração concorrente do estado do pagamento.",
+        },
+      });
+      return false;
+    }
     await tx.paymentAttempt.updateMany({
       where: { paymentId, status: "ACTIVE" },
-      data: { status: "BLOCKED" },
+      data: { status: "BLOCKED", finishedAt: new Date() },
     });
-
     await tx.paymentAttempt.create({
       data: {
         paymentId,
-        attemptNumber: nextAttemptNumber,
-        status: "ACTIVE",
+        attemptNumber,
+        status: terminalDecline ? "FAILED" : "ACTIVE",
+        finishedAt: terminalDecline ? new Date() : null,
         idempotencyKey: attemptKey,
         providerRef: result.providerRef,
       },
     });
-
-    await tx.payment.update({
-      where: { id: paymentId },
+    const paymentUpdated = await tx.payment.updateMany({
+      where: { id: paymentId, status: "INITIATED" },
       data: {
-        status: PROVIDER_STATUS_MAP[result.status] as never,
+        status: result.status === "CONFIRMED" ? "PROCESSING" : statusFromProvider,
         providerRef: result.providerRef,
         providerRawPayload: result.rawPayload as never,
       },
     });
+    if (paymentUpdated.count !== 1) return false;
 
-    await tx.order.update({
-      where: { id: order.id },
+    const orderClaim = await tx.order.updateMany({
+      where: { id: order.id, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
       data: { status: "PENDING_PAYMENT" },
     });
+    if (orderClaim.count !== 1) {
+      if (!terminalDecline) {
+        await tx.payment.updateMany({
+          where: { id: paymentId, status: { not: "DECLINED" } },
+          data: { status: "UNDER_REVIEW" },
+        });
+      }
+      return false;
+    }
 
     if (order.holdId) {
-      // Enquanto não há resultado definitivo, inventário protegido
-      await tx.inventoryHold.update({
-        where: { id: order.holdId },
-        data: { status: "PENDING_PAYMENT" },
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: {
+          id: order.holdId,
+          organizationId: order.organizationId,
+          status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+        },
+        data: {
+          status: result.status === "UNKNOWN" ? "VERIFYING" : "PENDING_PAYMENT",
+          ...(terminalDecline ? { expiresAt: new Date(Date.now() + 10 * 60 * 1000) } : {}),
+        },
       });
+      if (holdClaim.count !== 1) {
+        if (!terminalDecline) {
+          await tx.payment.updateMany({
+            where: { id: paymentId, status: { not: "DECLINED" } },
+            data: { status: "UNDER_REVIEW" },
+          });
+        }
+        return false;
+      }
     }
+    return true;
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId: order.organizationId,
     actorUserId: ctx.userId,
     action: "payment.initiated",
     after: sanitizeForAudit({
       paymentId,
-      attempt: nextAttemptNumber,
       provider: provider.code,
       amountCents: order.totalCents,
+      outcomeAttachedToOrder: attached,
+      providerStatus: result.status,
     }),
   });
+  if (!attached) {
+    if (!terminalDecline) {
+      await flagOrderForPaymentReview(order.id, result.rawPayload);
+    }
+    throw new BusinessRuleError("A encomenda foi alterada durante a iniciação. O resultado do prestador permanece em revisão.");
+  }
+
+  if (result.status === "CONFIRMED") {
+    await confirmPayment(result.providerRef, result.rawPayload, provider.code);
+  }
 
   return {
     paymentId,
@@ -165,6 +359,47 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
 }
 
 /** Confirmação idempotente: atualiza Payment, encomenda, hold e emite bilhetes. */
+async function flagOrderForPaymentReview(
+  orderId: string,
+  rawPayload: unknown,
+  blockedAttemptId?: string
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true, holdId: true },
+    });
+    const payments = await tx.payment.findMany({ where: { orderId }, select: { id: true } });
+    const paymentIds = payments.map((item) => item.id);
+    if (paymentIds.length > 0) {
+      await tx.payment.updateMany({
+        where: {
+          id: { in: paymentIds },
+          status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
+        },
+        data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+      });
+      await tx.paymentAttempt.updateMany({
+        where: { paymentId: { in: paymentIds }, status: "ACTIVE" },
+        data: { status: "BLOCKED", finishedAt: new Date() },
+      });
+    }
+    if (blockedAttemptId) {
+      await tx.paymentAttempt.updateMany({
+        where: { id: blockedAttemptId, status: { in: ["BLOCKED", "FAILED"] } },
+        data: { notes: "Callback tardio de tentativa bloqueada; encaminhado para revisão financeira." },
+      });
+    }
+    if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+      await tx.inventoryHold.updateMany({
+        where: { id: order.holdId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+        data: { status: "VERIFYING" },
+      });
+    }
+  });
+}
+
 export async function confirmPayment(
   providerRef: string,
   rawPayload: unknown,
@@ -181,51 +416,106 @@ export async function confirmPayment(
     console.error("[webhook] payment-not-found", { providerRef });
     return;
   }
-  if (payment.status === "CONFIRMED") return; // idempotente
-
-  await prisma.$transaction(async (tx) => {
-    // Revalida estado dentro da transação (webhook pode repetir)
-    const fresh = await tx.payment.findUnique({
-      where: { id: payment.id },
-      select: { status: true },
+  const matchingAttempt = await prisma.paymentAttempt.findFirst({
+    where: { paymentId: payment.id, providerRef },
+    select: { id: true, status: true },
+  });
+  if (matchingAttempt && ["BLOCKED", "FAILED"].includes(matchingAttempt.status)) {
+    await flagOrderForPaymentReview(payment.orderId, rawPayload, matchingAttempt.id);
+    await writeAudit({
+      organizationId: payment.organizationId,
+      actorUserId: null,
+      action: "payment.blocked_attempt_confirmation",
+      after: sanitizeForAudit({ paymentId: payment.id, attemptId: matchingAttempt.id, providerRef }),
     });
-    if (!fresh || fresh.status === "CONFIRMED") return;
+    return;
+  }
+  // A confirmação financeira pode ter sido persistida antes de uma falha
+  // transitória na emissão dos bilhetes. Repetir a emissão é seguro:
+  // issueTicketsForOrder serializa por encomenda e não duplica bilhetes.
+  if (payment.status === "CONFIRMED") {
+    if (payment.order.status === "CONFIRMED") {
+      const { issueTicketsForOrder } = await import("@/modules/access/service");
+      await issueTicketsForOrder(payment.orderId);
+    }
+    return;
+  }
 
-    await tx.payment.update({
-      where: { id: payment.id },
+  const didConfirm = await prisma.$transaction(async (tx) => {
+    // Ordem de locks consistente: encomenda → pagamento → reserva.
+    await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${payment.id}::uuid FOR UPDATE`;
+    // Não confirmar pagamento se o hold foi libertado/expirado.
+    const hold = payment.order.holdId
+      ? await tx.inventoryHold.findUnique({
+          where: { id: payment.order.holdId },
+          select: { id: true, status: true, sessionId: true, quantity: true },
+        })
+      : null;
+    if (payment.order.holdId && (!hold || !["RESERVED", "PENDING_PAYMENT", "VERIFYING", "CONFIRMED"].includes(hold.status))) {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] } },
+        data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+      });
+      return false;
+    }
+
+    // Claim do pagamento primeiro. DECLINED/CANCELLED/EXPIRED nunca passam
+    // diretamente a CONFIRMED; callbacks tardios seguem para revisão manual.
+    const paymentClaim = await tx.payment.updateMany({
+      where: {
+        id: payment.id,
+        providerRef,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
       data: {
         status: "CONFIRMED",
         confirmedAt: new Date(),
         providerRawPayload: rawPayload as never,
       },
     });
+    if (paymentClaim.count !== 1) {
+      const fresh = await tx.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
+      if (fresh && ["DECLINED", "CANCELLED", "EXPIRED"].includes(fresh.status)) {
+        const reopened = await tx.payment.updateMany({
+          where: { id: payment.id, status: fresh.status },
+          data: { status: "UNDER_REVIEW", providerRawPayload: rawPayload as never },
+        });
+        if (reopened.count === 1) {
+          const order = await tx.order.findUnique({
+            where: { id: payment.orderId },
+            select: { status: true, holdId: true },
+          });
+          if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+            await tx.inventoryHold.updateMany({
+              where: { id: order.holdId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
+              data: { status: "VERIFYING" },
+            });
+          }
+        }
+      }
+      return false;
+    }
 
-    // Opção B: tentativa ativa vira COMPLETED; as restantes ficam BLOCKED
-    await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment.id, status: "ACTIVE" },
-      data: { status: "COMPLETED", finishedAt: new Date() },
-    });
-    await tx.paymentAttempt.updateMany({
-      where: { paymentId: payment.id, status: "BLOCKED" },
-      data: { finishedAt: new Date() },
-    });
-
-    await tx.order.update({
-      where: { id: payment.orderId },
+    // Uma encomenda só pode ser confirmada por um pagamento.
+    const orderClaim = await tx.order.updateMany({
+      where: { id: payment.orderId, status: { in: ["RESERVED", "PENDING_PAYMENT"] } },
       data: { status: "CONFIRMED", confirmedAt: new Date() },
     });
+    if (orderClaim.count !== 1) {
+      await tx.payment.updateMany({
+        where: { id: payment.id, status: "CONFIRMED" },
+        data: { status: "UNDER_REVIEW" },
+      });
+      return false;
+    }
 
-    // Consome o hold: reservado → vendido (transacional)
-    const hold = await tx.inventoryHold.findUnique({
-      where: { id: payment.order.holdId ?? "" },
-      select: { id: true, status: true, sessionId: true, ticketTypeId: true, batchId: true, quantity: true },
-    });
-    if (hold) {
-      if (hold.status === "CONFIRMED") return; // já consumido
-      await tx.inventoryHold.update({
-        where: { id: hold.id },
+    if (hold && hold.status !== "CONFIRMED") {
+      const holdClaim = await tx.inventoryHold.updateMany({
+        where: { id: hold.id, status: hold.status },
         data: { status: "CONFIRMED", releasedAt: new Date() },
       });
+      if (holdClaim.count !== 1) throw new ConflictError("Reserva alterada durante a confirmação do pagamento.");
       for (const line of payment.order.lines) {
         const inv = await tx.ticketInventory.findUnique({
           where: {
@@ -237,23 +527,32 @@ export async function confirmPayment(
           },
           select: { id: true },
         });
-        if (inv) {
-          await tx.ticketInventory.update({
-            where: { id: inv.id },
-            data: {
-              reservedQuantity: { decrement: line.quantity },
-              soldQuantity: { increment: line.quantity },
-            },
-          });
-        }
+        if (!inv) throw new BusinessRuleError("Inventário da encomenda não encontrado.");
+        await tx.ticketInventory.update({
+          where: { id: inv.id },
+          data: {
+            reservedQuantity: { decrement: line.quantity },
+            soldQuantity: { increment: line.quantity },
+          },
+        });
       }
     }
+
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: payment.id, status: "ACTIVE" },
+      data: { status: "COMPLETED", finishedAt: new Date() },
+    });
+    await tx.paymentAttempt.updateMany({
+      where: { paymentId: payment.id, status: "BLOCKED" },
+      data: { finishedAt: new Date() },
+    });
+    return true;
   });
 
-  // Emissão de bilhetes (idempotente) — módulo de acesso
+  if (!didConfirm) return;
+
   const { issueTicketsForOrder } = await import("@/modules/access/service");
   await issueTicketsForOrder(payment.orderId);
-
   await writeAudit({
     organizationId: payment.organizationId,
     actorUserId: null,
@@ -269,7 +568,7 @@ export async function handleWebhook(
   headers: Record<string, string>
 ): Promise<{ processed: boolean }> {
   const provider = await prisma.paymentProvider.findUnique({ where: { code: providerCode } });
-  if (!provider) throw new NotFoundError("Prestador");
+  if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(providerCode);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador não instalado.");
 
@@ -287,47 +586,142 @@ export async function handleWebhook(
       providerRef: payload.providerRef,
       provider: { code: providerCode },
     },
-    select: { id: true, amountCents: true, orderId: true },
+    select: { id: true, amountCents: true, orderId: true, organizationId: true, status: true },
   });
-  if (!payment) return { processed: false }; // ignora transações desconhecidas
+  if (!payment) {
+    // Tentativa antiga/bloqueada: nunca emitir bilhetes automaticamente, mas
+    // não ignorar uma eventual captura tardia que possa exigir reembolso.
+    const staleAttempt = await prisma.paymentAttempt.findFirst({
+      where: {
+        providerRef: payload.providerRef,
+        payment: { provider: { code: providerCode } },
+      },
+      include: {
+        payment: {
+          include: {
+            order: { select: { id: true, status: true, holdId: true } },
+          },
+        },
+      },
+    });
+    if (!staleAttempt) return { processed: false };
+    if (["BLOCKED", "FAILED"].includes(staleAttempt.status)) {
+      if (
+        payload.status === "CONFIRMED" ||
+        payload.status === "UNKNOWN" ||
+        payload.amountCents !== staleAttempt.payment.amountCents
+      ) {
+        await flagOrderForPaymentReview(
+          staleAttempt.payment.orderId,
+          payload.rawPayload,
+          staleAttempt.id
+        );
+        await writeAudit({
+          organizationId: staleAttempt.payment.organizationId,
+          actorUserId: null,
+          action: "payment.blocked_attempt_callback",
+          after: sanitizeForAudit({
+            paymentId: staleAttempt.paymentId,
+            attemptId: staleAttempt.id,
+            providerRef: payload.providerRef,
+            providerStatus: payload.status,
+          }),
+        });
+      } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
+        await prisma.paymentAttempt.updateMany({
+          where: { id: staleAttempt.id, status: staleAttempt.status },
+          data: { status: "FAILED", finishedAt: new Date() },
+        });
+      }
+      return { processed: true };
+    }
+    return { processed: false };
+  }
+  // Um webhook não confirmado não pode rebaixar um pagamento já confirmado.
+  // Confirmações de tentativas bloqueadas seguem para auditoria/revisão abaixo.
+  if (payment.status === "CONFIRMED" && payload.status !== "CONFIRMED") {
+    return { processed: true };
+  }
 
   // Montante tem de bater com o registado (conciliação server-side)
   if (payload.amountCents !== payment.amountCents) {
     // Divergência → resultado indefinido: inventário protegido + revisão manual
-    const order = await prisma.order.findUnique({
-      where: { id: payment.orderId },
-      select: { holdId: true },
-    });
-    if (order?.holdId) {
-      await markHoldVerifying(order.holdId);
-    }
-    await prisma.payment.update({
-      where: { id: payment.id },
+    const changed = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW", "DECLINED", "CANCELLED", "EXPIRED"] },
+      },
       data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
-    throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
+    if (changed.count === 1) {
+      const order = await prisma.order.findUnique({
+        where: { id: payment.orderId },
+        select: { holdId: true },
+      });
+      if (order?.holdId) await markHoldVerifying(order.holdId);
+      throw new AppError("AMOUNT_MISMATCH", 409, "Divergência de valor: encaminhado para revisão.");
+    }
+    await writeAudit({
+      organizationId: payment.organizationId,
+      actorUserId: null,
+      action: "payment.webhook_amount_mismatch_after_state_change",
+      after: sanitizeForAudit({ paymentId: payment.id, providerRef: payload.providerRef }),
+    });
+    return { processed: true };
   }
 
   if (payload.status === "CONFIRMED") {
     await confirmPayment(payload.providerRef, payload.rawPayload, providerCode);
   } else if (["DECLINED", "CANCELLED", "EXPIRED"].includes(payload.status)) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "payments" WHERE "id" = ${payment.id}::uuid FOR UPDATE`;
+      const changed = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+        },
+        data: { status: PROVIDER_STATUS_MAP[payload.status] as never },
+      });
+      if (changed.count !== 1) return;
+      await tx.paymentAttempt.updateMany({
+        where: { paymentId: payment.id, status: "ACTIVE" },
+        data: { status: "FAILED", finishedAt: new Date() },
+      });
+      const order = await tx.order.findUnique({
+        where: { id: payment.orderId },
+        select: { status: true, holdId: true },
+      });
+      if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            status: { in: ["RESERVED", "PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: {
+            status: "PENDING_PAYMENT",
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        });
+      }
     });
   } else if (payload.status === "UNKNOWN") {
-    // Sem resultado definitivo: protege inventário e marca revisão
-    const order = await prisma.order.findUnique({
-      where: { id: payment.orderId },
-      select: { holdId: true },
+    // Sem resultado definitivo: protege inventário e marca revisão sem
+    // rebaixar um pagamento que outro webhook já confirmou.
+    const changed = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        status: { in: ["CREATED", "INITIATED", "AWAITING_AUTHORIZATION", "PROCESSING", "UNDER_REVIEW"] },
+      },
+      data: { status: "UNDER_REVIEW", providerRawPayload: payload.rawPayload as never },
     });
-    if (order?.holdId) {
-      await markHoldVerifying(order.holdId);
+    if (changed.count === 1) {
+      const order = await prisma.order.findUnique({
+        where: { id: payment.orderId },
+        select: { holdId: true },
+      });
+      if (order?.holdId) await markHoldVerifying(order.holdId);
     }
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "UNDER_REVIEW" },
-    });
   }
 
   return { processed: true };
@@ -335,13 +729,14 @@ export async function handleWebhook(
 
 /** Opção C: revisão manual por operador autorizado — exige evidência escrita. */
 export async function manualReview(ctx: AuthContext, input: ManualReviewInput): Promise<void> {
-  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
+  if (!organizationId) throw new ForbiddenError("no-active-organization");
   if (!ctx.permissions.has("payment:review")) throw new ForbiddenError("payment:review");
 
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId },
   });
-  if (!payment || payment.organizationId !== ctx.organizationId) {
+  if (!payment || payment.organizationId !== organizationId) {
     throw new NotFoundError("Pagamento");
   }
   if (payment.status !== "UNDER_REVIEW" && payment.status !== "AWAITING_AUTHORIZATION") {
@@ -349,13 +744,48 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
   }
 
   if (input.decision === "CONFIRM") {
-    // Opção C: ninguém marca como paga sem evidência (notas obrigatórias)
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    // A confirmação manual percorre o mesmo fluxo transacional da confirmação
+    // do prestador: pagamento, encomenda, inventário e bilhetes.
+    const provider = await prisma.paymentProvider.findUnique({
+      where: { id: payment.providerId },
+      select: { code: true },
     });
+    if (!provider) throw new NotFoundError("Prestador");
+
+    const manualProviderRef = payment.providerRef ?? `manual_${payment.id}`;
+    if (!payment.providerRef) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { providerRef: manualProviderRef },
+      });
+    }
+    await confirmPayment(
+      manualProviderRef,
+      { source: "manual-review", evidenceNotes: input.evidenceNotes },
+      provider.code
+    );
+    const confirmedPayment = await prisma.payment.findUnique({
+      where: { id: payment.id },
+      select: { status: true },
+    });
+    if (confirmedPayment?.status !== "CONFIRMED") {
+      await writeAudit({
+        organizationId: organizationId,
+        actorUserId: ctx.userId,
+        action: "payment.reviewed_late_confirmation",
+        after: sanitizeForAudit({
+          paymentId: payment.id,
+          decision: "CONFIRM",
+          outcome: confirmedPayment?.status ?? "UNKNOWN",
+          evidence: input.evidenceNotes,
+        }),
+      });
+      throw new BusinessRuleError(
+        "A encomenda já não pode ser confirmada automaticamente; o pagamento permanece em revisão financeira."
+      );
+    }
     await writeAudit({
-      organizationId: ctx.organizationId,
+      organizationId: organizationId,
       actorUserId: ctx.userId,
       action: "payment.reviewed",
       after: sanitizeForAudit({
@@ -364,15 +794,50 @@ export async function manualReview(ctx: AuthContext, input: ManualReviewInput): 
         evidence: input.evidenceNotes,
       }),
     });
-    const { issueTicketsForOrder } = await import("@/modules/access/service");
-    await issueTicketsForOrder(payment.orderId);
   } else {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "DECLINED" },
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${payment.orderId}::uuid FOR UPDATE`;
+      const changed = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          organizationId: organizationId,
+          status: { in: ["UNDER_REVIEW", "AWAITING_AUTHORIZATION"] },
+        },
+        data: { status: "DECLINED" },
+      });
+      if (changed.count !== 1) throw new ConflictError("Pagamento já foi processado.");
+
+      await tx.paymentAttempt.updateMany({
+        where: { paymentId: payment.id, status: "ACTIVE" },
+        data: { status: "FAILED", finishedAt: new Date() },
+      });
+
+      const order = await tx.order.findUnique({
+        where: { id: payment.orderId },
+        select: { status: true, holdId: true },
+      });
+      if (order?.status === "PENDING_PAYMENT") {
+        await tx.order.updateMany({
+          where: { id: payment.orderId, status: "PENDING_PAYMENT" },
+          data: { status: "RESERVED" },
+        });
+      }
+      if (order?.holdId && ["RESERVED", "PENDING_PAYMENT"].includes(order.status)) {
+        await tx.inventoryHold.updateMany({
+          where: {
+            id: order.holdId,
+            status: { in: ["PENDING_PAYMENT", "VERIFYING"] },
+          },
+          data: {
+            status: "RESERVED",
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+            releasedAt: null,
+          },
+        });
+      }
     });
     await writeAudit({
-      organizationId: ctx.organizationId,
+      organizationId: organizationId,
       actorUserId: ctx.userId,
       action: "payment.reviewed",
       after: sanitizeForAudit({

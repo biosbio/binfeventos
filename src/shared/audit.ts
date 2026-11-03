@@ -17,6 +17,8 @@ export type AuditAction =
   | "auth.logout"
   | "auth.login_failed"
   | "auth.mfa_enabled"
+  | "admin.user.updated"
+  | "admin.user.status_changed"
   | "org.created"
   | "org.suspended"
   | "org.reactivated"
@@ -45,6 +47,11 @@ export type AuditAction =
   | "payment.confirmed"
   | "payment.declined"
   | "payment.reviewed"
+  | "payment.initiation_uncertain"
+  | "payment.blocked_attempt_confirmation"
+  | "payment.blocked_attempt_callback"
+  | "payment.reviewed_late_confirmation"
+  | "payment.webhook_amount_mismatch_after_state_change"
   | "refund.requested"
   | "refund.approved"
   | "refund.rejected"
@@ -117,10 +124,23 @@ const SENSITIVE_KEYS = new Set([
   "passwordHash",
   "token",
   "tokenHash",
+  "refreshToken",
+  "accessToken",
   "qrSecret",
   "qrSecretHash",
+  "qrToken",
   "secret",
   "secretHash",
+  "mfaSecret",
+  "webhookSecret",
+  "merchantToken",
+  "apiKey",
+  "code",
+  "codeHash",
+  "otp",
+  "totpCode",
+  "authorization",
+  "providerRawPayload",
   "cvv",
   "cardNumber",
   "adapterConfig",

@@ -86,6 +86,7 @@ model User {
   memberships OrgMembership[]
   sessions    Session[]
   panelVerificationCodes PanelVerificationCode[]
+  passwordResetCodes PasswordResetCode[]
   orders      Order[]
   shifts      CashShift[]
 
@@ -176,6 +177,22 @@ model PanelVerificationCode {
 
   @@index([userId, expiresAt])
   @@map("panel_verification_codes")
+}
+
+model PasswordResetCode {
+  id         String             @id @default(uuid()) @db.Uuid
+  userId     String             @db.Uuid
+  codeHash   String
+  channel    VerificationChannel
+  expiresAt  DateTime
+  attempts   Int                @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_codes")
 }
 
 model AuditLog {
@@ -391,23 +408,25 @@ model TicketInventory {
 }
 
 model InventoryHold {
-  id           String     @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  sessionId    String     @db.Uuid
-  ticketTypeId String     @db.Uuid
-  batchId      String     @db.Uuid
-  status       HoldStatus @default(RESERVED)
-  quantity     Int
-  idempotencyKey String?  @unique
-  expiresAt    DateTime
-  releasedAt   DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  userId         String?    @db.Uuid
+  sessionId      String     @db.Uuid
+  ticketTypeId   String     @db.Uuid
+  batchId        String     @db.Uuid
+  status         HoldStatus @default(RESERVED)
+  quantity       Int
+  idempotencyKey String?    @unique
+  expiresAt      DateTime
+  releasedAt     DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   session    EventSession @relation(fields: [sessionId], references: [id])
   ticketType TicketType   @relation(fields: [ticketTypeId], references: [id])
 
   @@index([sessionId, status])
+  @@index([userId, status])
   @@index([expiresAt])
   @@map("inventory_holds")
 }
@@ -802,6 +821,7 @@ model FinancialLedgerEntry {
 
   @@index([organizationId, createdAt])
   @@index([orderId])
+  @@unique([compensatesEntryId])
   @@map("financial_ledger_entries")
 }
 
@@ -936,6 +956,9 @@ model Ticket {
   sessionId      String       @db.Uuid
   ticketTypeId   String       @db.Uuid
   orderAttendeeId String?     @db.Uuid
+  holderUserId   String?      @db.Uuid
+  holderEmail    String?
+  holderName     String?
   seatId         String?     @db.Uuid
   ticketNumber   String       @unique
   status         TicketStatus @default(ISSUED)
@@ -959,6 +982,8 @@ model Ticket {
 
   @@index([orderId])
   @@index([sessionId, status])
+  @@index([holderUserId, status])
+  @@index([holderEmail, status])
   @@map("tickets")
 }
 
@@ -1297,4 +1322,15 @@ model DataExport {
 
   @@index([organizationId, status])
   @@map("data_exports")
+}
+
+// Rate limiting persistente, partilhado por todas as instâncias da aplicação.
+model RateLimitBucket {
+  key       String   @id
+  count     Int      @default(0)
+  resetAt   DateTime @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([resetAt])
+  @@map("rate_limit_buckets")
 }

@@ -1,5 +1,6 @@
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
-import { hashPassword } from "../src/shared/lib/security";
+import { hashPassword, encryptMfaSecret } from "../src/shared/lib/security";
 import { PERMISSIONS, SYSTEM_ROLES } from "../src/shared/permissions";
 
 // Seed: permissões, papéis, prestadores, administrador e organização inicial.
@@ -26,6 +27,14 @@ async function main(): Promise<void> {
     });
     systemRoles.set(roleName, role.id);
 
+    // Sincroniza permissões: não conservar privilégios removidos do catálogo.
+    await prisma.rolePermission.deleteMany({
+      where: {
+        roleId: role.id,
+        permission: { is: { code: { notIn: permCodes } } },
+      },
+    });
+
     for (const code of permCodes) {
       const perm = await prisma.permission.findUnique({ where: { code } });
       if (!perm) throw new Error(`Permissão não encontrada no seed: ${code}`);
@@ -43,28 +52,45 @@ async function main(): Promise<void> {
     create: { code: "cash", name: "Dinheiro (bilheteira física)", country: "GLOBAL", isActive: true },
   });
 
-  const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET ?? "dev-only-secret";
+  const isProduction = process.env.NODE_ENV === "production";
+  const sandboxSecret = process.env.SANDBOX_WEBHOOK_SECRET;
+  if (!isProduction && (!sandboxSecret || sandboxSecret.length < 32)) {
+    throw new Error("Defina SANDBOX_WEBHOOK_SECRET com pelo menos 32 caracteres no ambiente de desenvolvimento.");
+  }
+  const sandboxConfig = sandboxSecret ? { webhookSecret: sandboxSecret } : {};
   await prisma.paymentProvider.upsert({
     where: { code: "sandbox" },
-    update: {},
+    update: {
+      isActive: !isProduction,
+      adapterConfig: sandboxConfig,
+    },
     create: {
       code: "sandbox",
       name: "Sandbox (desenvolvimento)",
       country: "GLOBAL",
-      isActive: true,
-      adapterConfig: { webhookSecret: sandboxSecret },
+      isActive: !isProduction,
+      adapterConfig: sandboxConfig,
     },
   });
 
-  const adminEmail = process.env.ADMIN_EMAIL ?? "moi7-@hotmail.com";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "^z3*fUmyFXHh@BvGbsD#D^PLd^9q!j9dKJfVB#^VZB#TBYC!7*Nd3!";
+  const adminEmail = process.env.ADMIN_EMAIL ?? "admin@binf.local";
+  const adminPassword = process.env.ADMIN_PASSWORD;
   const existingAdmin = await prisma.user.findUnique({
     where: { email: adminEmail },
     select: { id: true },
   });
   const adminSecret = process.env.ADMIN_MFA_SECRET;
-  if (!existingAdmin && !adminSecret) {
-    throw new Error("Defina ADMIN_MFA_SECRET no .env antes de criar o administrador. Não partilhe esse segredo.");
+  if (
+    !existingAdmin &&
+    (
+      !adminPassword ||
+      adminPassword.length < 12 ||
+      !adminSecret ||
+      adminSecret.length < 16 ||
+      !/^[0-9a-fA-F]{64}$/.test(process.env.MFA_ENCRYPTION_KEY ?? "")
+    )
+  ) {
+    throw new Error("Para criar o administrador, defina ADMIN_PASSWORD (mínimo 12 caracteres), ADMIN_MFA_SECRET e MFA_ENCRYPTION_KEY (64 caracteres hexadecimais) no ambiente. Não use credenciais predefinidas nem partilhe esses segredos.");
   }
 
   const admin = await prisma.user.upsert({
@@ -74,9 +100,9 @@ async function main(): Promise<void> {
       fullName: "Administrador da Plataforma",
       platformRole: "PLATFORM_ADMIN",
       email: adminEmail,
-      passwordHash: await hashPassword(adminPassword),
+      passwordHash: await hashPassword(adminPassword!),
       mfaEnabled: true,
-      mfaSecret: adminSecret!,
+      mfaSecret: encryptMfaSecret(adminSecret!),
       status: "ACTIVE",
     },
     select: { id: true },

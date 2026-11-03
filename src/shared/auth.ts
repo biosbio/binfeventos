@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/shared/lib/prisma";
 import { sha256 } from "@/shared/lib/security";
+import { assertOrgActive } from "@/shared/audit";
 import { AppError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
 import type { PermissionCode } from "@/shared/permissions";
 
@@ -98,7 +99,12 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     });
     for (const membership of memberships) {
       for (const rolePermission of membership.role.rolePermissions) {
-        permissions.add(rolePermission.permission.code);
+        const code = rolePermission.permission.code;
+        // Platform-wide permissions derive only from User.platformRole,
+        // never from an organization membership or a custom organization role.
+        if (code !== "admin:platform" && code !== "subscription:manage") {
+          permissions.add(code);
+        }
       }
     }
   }
@@ -140,17 +146,25 @@ export async function requirePermission(permission: PermissionCode): Promise<Aut
   if (!ctx.permissions.has(permission)) {
     throw new ForbiddenError(permission);
   }
+  if (ctx.organizationId && ctx.platformRole !== "PLATFORM_ADMIN") {
+    await assertOrgActive(ctx.organizationId);
+  }
   return ctx;
 }
 
 /** Utilizador autenticado pertence à organização indicada? */
 export async function isMemberOf(ctx: AuthContext, organizationId: string): Promise<boolean> {
-  if (ctx.organizationId === organizationId) return true;
-  const m = await prisma.orgMembership.findFirst({
-    where: { userId: ctx.userId, organizationId },
-    select: { acceptedAt: true },
+  // Nunca confiar apenas no organizationId guardado na sessão: a
+  // associação pode ter sido revogada depois da criação da sessão.
+  const membership = await prisma.orgMembership.findFirst({
+    where: {
+      userId: ctx.userId,
+      organizationId,
+      acceptedAt: { not: null },
+    },
+    select: { id: true },
   });
-  return m?.acceptedAt != null;
+  return membership !== null;
 }
 
 /** Exige autenticação reforçada recente para qualquer rota sob /painel. */

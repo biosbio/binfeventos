@@ -12,11 +12,11 @@ import { z } from "zod";
 //   POST /api/organizations/members/role    — mudar papel (org:role:assign)
 // ============================================================
 
-function parseBody<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parseBody<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const result = schema.safeParse(data);
   if (!result.success) {
     throw new ValidationError(
-      result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+      result.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
     );
   }
   return result.data;

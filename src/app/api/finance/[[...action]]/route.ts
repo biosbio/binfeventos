@@ -16,10 +16,12 @@ import { z } from "zod";
 //   GET  /api/finance/ledger              — consultar (ledger:read)
 // ============================================================
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
@@ -42,6 +44,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const body = parse((await import("@/modules/finance/schemas")).approveRefundSchema, await req.json());
       const { decideRefund } = await import("@/modules/finance/refunds");
       const result = await decideRefund(auth, body);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
+    if (path === "refunds/complete") {
+      const auth = await requirePermission("refund:approve");
+      const body = parse((await import("@/modules/finance/schemas")).completeRefundSchema, await req.json());
+      const { completeRefund } = await import("@/modules/finance/refunds");
+      const result = await completeRefund(auth, body);
       return NextResponse.json({ ok: true, ...result });
     }
 

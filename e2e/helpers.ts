@@ -1,4 +1,7 @@
+import "dotenv/config";
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { createHash } from "crypto";
+import { prisma } from "../src/shared/lib/prisma";
 
 // ============================================================
 // Helpers E2E — preparação de dados via API com o organizador.
@@ -26,7 +29,7 @@ export async function registerAndLogin(
   password: string
 ) {
   const reg = await request.post("/api/users/register", {
-    data: { fullName: `E2E ${email}`, email, password },
+    data: { fullName: `E2E ${email}`, email, phone: "+245900000001", password },
   });
   // 201 criado; 409 se já existe (reuso em retries)
   expect([201, 409]).toContain(reg.status());
@@ -73,6 +76,7 @@ export async function organizerBootstrap(
   // Re-login para a sessão ganhar o contexto organizacional
   const relogin = await registerAndLogin(request, creds.organizerEmail, creds.password);
   const cookie = relogin.headers()["set-cookie"] ?? "";
+  await verifyOrganizerPanelForE2E(cookie);
   const authHeaders = { cookie, "content-type": "application/json" };
 
   // Recinto
@@ -108,12 +112,11 @@ export async function organizerBootstrap(
   expect(session.ok()).toBeTruthy();
   const sessionId = (await session.json()).session.id as string;
 
-  // Publicar
-  const publish = await org.post(`/api/events/${eventId}/transition`, {
-    headers: authHeaders,
-    data: { to: "PUBLISHED" },
+  // A publicação exige aprovação de administrador; este cenário foca a compra.
+  await prisma.event.update({
+    where: { id: eventId },
+    data: { status: "PUBLISHED", publishedAt: new Date() },
   });
-  expect(publish.ok()).toBeTruthy();
 
   // Tipo de bilhete
   const tt = await org.post("/api/catalog/ticket-types", {
@@ -162,6 +165,21 @@ export async function organizerBootstrap(
     eventSlug: slug,
     venueId,
   };
+}
+
+async function verifyOrganizerPanelForE2E(setCookie: string): Promise<void> {
+  const token = setCookie.split(";")[0]?.split("=")[1];
+  if (!token) throw new Error("Cookie de sessão do organizador ausente.");
+
+  const result = await prisma.session.updateMany({
+    where: {
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    data: { panelVerifiedUntil: new Date(Date.now() + 10 * 60 * 1000) },
+  });
+  expect(result.count).toBe(1);
 }
 
 /** Registo + login do comprador; devolve cookie de sessão. */

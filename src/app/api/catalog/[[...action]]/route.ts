@@ -11,10 +11,12 @@ import { z } from "zod";
 //   POST /api/catalog/run-expiration    — job de expiração (inventory:read)
 // ============================================================
 
-function parse<T>(schema: { safeParse: (d: unknown) => { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } } }, data: unknown): T {
+function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
-    throw new ValidationError(r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    throw new ValidationError(
+      r.error.issues.map((i) => `${i.path.map((part) => String(part)).join(".")}: ${i.message}`).join("; ")
+    );
   }
   return r.data;
 }
@@ -56,7 +58,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
     // Job interno de expiração de reservas (chamado por cron/worker)
     if (path === "run-expiration") {
-      const auth = await requirePermission("inventory:read");
+      // A tarefa é global a todas as organizações; apenas o administrador
+      // central, com step-up MFA, pode executá-la manualmente.
+      const auth = await requirePermission("admin:platform");
       const { releaseExpiredHolds } = await import("@/modules/inventory/service");
       const result = await releaseExpiredHolds();
       return NextResponse.json({ ok: true, ...result, by: auth.userId });

@@ -4,6 +4,9 @@ import {
   hashPassword,
   verifyPassword,
   rateLimit,
+  encryptMfaSecret,
+  decryptMfaSecret,
+  isEncryptedMfaSecret,
 } from "@/shared/lib/security";
 import { AppError, BusinessRuleError, ConflictError, UnauthorizedError } from "@/shared/errors";
 import { createSession, revokeCurrentSession } from "@/shared/auth";
@@ -44,8 +47,11 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
 /** Autentica e cria a sessão (com MFA quando ativado). */
 export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
-  if (rateLimit(`login:${ip ?? "unknown"}:${input.email}`, 10, 60_000)) {
-    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde um minuto.");
+  if (
+    await rateLimit(`login:ip:${ip ?? "unknown"}`, 30, 15 * 60 * 1000) ||
+    await rateLimit(`login:email:${input.email}`, 10, 15 * 60 * 1000)
+  ) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas de acesso. Aguarde quinze minutos.");
   }
 
   const user = await prisma.user.findUnique({ where: { email: input.email } });
@@ -60,13 +66,29 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     throw new AppError("ACCOUNT_SUSPENDED", 403, "Conta suspensa ou encerrada.");
   }
 
+  // Administrador da plataforma nunca pode autenticar sem MFA ativo.
+  if (user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled) {
+    throw new AppError("MFA_MISCONFIGURED", 500, "MFA obrigatório do administrador não está ativo. Contacte o suporte.");
+  }
+  if (user.platformRole === "PLATFORM_ADMIN" && !process.env.MFA_ENCRYPTION_KEY) {
+    throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
+  }
+
   // MFA: só entra com código TOTP válido (SEC-01)
   if (user.mfaEnabled) {
     if (!user.mfaSecret) {
       throw new AppError("MFA_MISCONFIGURED", 500, "MFA mal configurado. Contacte o suporte.");
     }
-    if (!input.totpCode || !authenticator.verify({ token: input.totpCode, secret: user.mfaSecret })) {
+    const mfaSecret = decryptMfaSecret(user.mfaSecret);
+    if (!input.totpCode || !authenticator.verify({ token: input.totpCode, secret: mfaSecret })) {
       throw new AppError("MFA_REQUIRED", 401, "Código MFA obrigatório ou inválido.");
+    }
+    // Migração transparente de segredos antigos em texto claro.
+    if (!isEncryptedMfaSecret(user.mfaSecret) && process.env.MFA_ENCRYPTION_KEY) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { mfaSecret: encryptMfaSecret(mfaSecret) },
+      });
     }
   }
 
@@ -87,13 +109,19 @@ export async function beginEnableMfa(userId: string): Promise<{
   secret: string;
 }> {
   const secret = authenticator.generateSecret();
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, mfaEnabled: true },
+  });
   if (!user) throw new UnauthorizedError();
+  if (user.mfaEnabled) {
+    throw new BusinessRuleError("MFA já está ativo. Não é permitido substituir o segredo sem um fluxo de recuperação.");
+  }
 
   // Guarda o segredo ANTES de ativar; confirmação acontece depois
   await prisma.user.update({
     where: { id: userId },
-    data: { mfaSecret: secret },
+    data: { mfaSecret: encryptMfaSecret(secret) },
   });
 
   const otpauthUrl = authenticator.keyuri(user.email, "BINF EVENTOS", secret);
@@ -102,6 +130,9 @@ export async function beginEnableMfa(userId: string): Promise<{
 
 /** Confirma ativação de MFA com o primeiro código válido. */
 export async function confirmEnableMfa(userId: string, totpCode: string): Promise<void> {
+  if (await rateLimit(`mfa-enable:${userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { mfaSecret: true, mfaEnabled: true },
@@ -109,7 +140,7 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
   if (!user?.mfaSecret) {
     throw new BusinessRuleError("Ative o MFA antes de confirmar.");
   }
-  if (!authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
@@ -117,14 +148,20 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
 
 /** Desativa MFA (exige código válido — não pode ser desligado sem prova). */
 export async function disableMfa(userId: string, totpCode: string): Promise<void> {
+  if (await rateLimit(`mfa-disable:${userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
+  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { mfaSecret: true, mfaEnabled: true },
+    select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
   });
+  if (user?.platformRole === "PLATFORM_ADMIN") {
+    throw new BusinessRuleError("O MFA do administrador da plataforma é obrigatório e não pode ser desativado.");
+  }
   if (!user?.mfaEnabled || !user.mfaSecret) {
     throw new BusinessRuleError("MFA não está ativado.");
   }
-  if (!authenticator.verify({ token: totpCode, secret: user.mfaSecret })) {
+  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({
@@ -137,7 +174,8 @@ export async function disableMfa(userId: string, totpCode: string): Promise<void
 export async function changePassword(
   userId: string,
   currentPassword: string,
-  newPassword: string
+  newPassword: string,
+  totpCode?: string
 ): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -147,6 +185,17 @@ export async function changePassword(
 
   const ok = await verifyPassword(user.passwordHash, currentPassword);
   if (!ok) throw new UnauthorizedError();
+
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { platformRole: true, mfaEnabled: true, mfaSecret: true },
+  });
+  if (account?.platformRole === "PLATFORM_ADMIN") {
+    if (!account.mfaEnabled || !account.mfaSecret || !totpCode || !/^\d{6}$/.test(totpCode) ||
+        !authenticator.verify({ token: totpCode, secret: decryptMfaSecret(account.mfaSecret) })) {
+      throw new AppError("INVALID_MFA", 401, "Confirme a alteração com o código da aplicação autenticadora.");
+    }
+  }
 
   await prisma.user.update({
     where: { id: userId },

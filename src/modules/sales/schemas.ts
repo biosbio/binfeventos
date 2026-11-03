@@ -12,8 +12,8 @@ export const attendeeSchema = z.object({
   fullName: z.string().trim().min(3, "Nome do titular obrigatório.").max(120),
   email: z.string().trim().toLowerCase().email().optional(),
   phone: z.string().trim().min(7).max(20).optional(),
-  documentType: z.string().trim().max(30).optional(),
-  documentNumber: z.string().trim().max(40).optional(),
+  documentType: z.string().trim().min(2, "Tipo de documento obrigatório.").max(30),
+  documentNumber: z.string().trim().min(4, "Número do documento obrigatório.").max(40),
 });
 
 export const createOrderSchema = z
