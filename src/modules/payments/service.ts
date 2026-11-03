@@ -10,7 +10,10 @@ import {
 import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
-import { getAdapter, type ProviderResultStatus } from "./adapter";
+import {
+  getAdapter,
+  type ProviderResultStatus,
+} from "./adapter";
 import { registerAllAdapters } from "./adapters";
 
 // Regista os adaptadores apenas no módulo de serviço, executado no servidor.
@@ -41,6 +44,34 @@ const PROVIDER_STATUS_MAP: Record<ProviderResultStatus, string> = {
   EXPIRED: "EXPIRED",
   UNKNOWN: "UNDER_REVIEW",
 };
+
+export async function listPaymentOptions(currency: string) {
+  const providers = await prisma.paymentProvider.findMany({
+    where: { isActive: true },
+    select: { code: true, name: true, country: true, adapterConfig: true },
+    orderBy: { name: "asc" },
+  });
+
+  return providers.flatMap((provider) => {
+    const adapter = getAdapter(provider.code);
+    const adapterConfig = (provider.adapterConfig ?? {}) as Record<string, unknown>;
+    if (
+      !adapter ||
+      !adapter.isConfigured(adapterConfig) ||
+      (adapter.supportedCurrencies &&
+        !adapter.supportedCurrencies.includes(currency))
+    ) {
+      return [];
+    }
+
+    return adapter.supportedMethods.map((method) => ({
+      providerCode: provider.code,
+      providerName: provider.name,
+      country: provider.country,
+      method,
+    }));
+  });
+}
 
 /** Iniciar pagamento: cria/atualiza Payment + nova tentativa (Opção B). */
 export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentInput) {
@@ -81,8 +112,18 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
   if (!provider || !provider.isActive) throw new NotFoundError("Prestador");
   const adapter = getAdapter(provider.code);
   if (!adapter) throw new AppError("ADAPTER_MISSING", 500, "Adaptador do prestador não instalado.");
-  if (provider.code === "multicaixa-express" && order.currency !== "AOA") {
-    throw new BusinessRuleError("Multicaixa Express só aceita encomendas em AOA.");
+  const adapterConfig = (provider.adapterConfig ?? {}) as Record<string, unknown>;
+  if (!adapter.isConfigured(adapterConfig)) {
+    throw new BusinessRuleError("Este meio de pagamento ainda não está configurado.");
+  }
+  if (!adapter.supportedMethods.includes(input.method)) {
+    throw new BusinessRuleError("O prestador não suporta este método de pagamento.");
+  }
+  if (
+    adapter.supportedCurrencies &&
+    !adapter.supportedCurrencies.includes(order.currency)
+  ) {
+    throw new BusinessRuleError("Este prestador não aceita a moeda da encomenda.");
   }
 
   const attemptKey = input.idempotencyKey ?? generateIdempotencyKey();
@@ -209,7 +250,7 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
     currency: order.currency,
     returnUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/checkout/return?order=${order.id}`,
     idempotencyKey: attemptKey,
-    adapterConfig: (provider.adapterConfig ?? {}) as Record<string, unknown>,
+    adapterConfig,
     });
   } catch {
     await prisma.$transaction(async (tx) => {

@@ -126,6 +126,23 @@ describe("boxoffice: turnos", () => {
       }).success
     ).toBe(false);
   });
+
+  it("aceita venda presencial com pagamento em dinheiro pela bilheteira", () => {
+    expect(
+      boxOfficeSaleSchema.safeParse({
+        stationCode: "GUICHE-01",
+        holdId: "b3f1c0a0-0000-4000-8000-000000000041",
+        buyerName: "Comprador",
+        buyerEmail: "comprador@example.com",
+        attendees: [{
+          ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000042",
+          fullName: "Titular do bilhete",
+          documentType: "PASSAPORTE",
+          documentNumber: "AB123456",
+        }],
+      }).success
+    ).toBe(true);
+  });
 });
 
 describe("access: createGateSchema", () => {

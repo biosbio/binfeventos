@@ -11,7 +11,7 @@ todos utilizando o mesmo motor de inventário e encomendas.
 2. Seleção da quantidade ou dos lugares disponíveis.
 3. Verificação da disponibilidade.
 4. Reserva temporária do inventário.
-5. Identificação do comprador.
+5. Identificação do comprador pela conta autenticada no marketplace.
 6. Identificação obrigatória de cada titular.
 7. Aplicação de descontos e taxas.
 8. Apresentação do resumo financeiro.
@@ -99,8 +99,10 @@ erDiagram
    pessoa responsável pela encomenda e pagamento; titular é o participante
    com direito de entrada. Não é obrigatório criar conta para cada titular.
    O comprador pode ser titular de um dos bilhetes.
-4. `buyerUserId` opcional: no marketplace, compra sem conta é possível;
-   os dados mínimos do comprador (nome, email) são sempre exigidos.
+4. No marketplace, o comprador tem de estar autenticado; nome, email e
+   telefone são obtidos do perfil da conta no servidor, sem pedir esses dados
+   novamente no checkout. Vendas presenciais continuam a receber os dados do
+   comprador na bilheteira.
 5. Encomendas mono-sessão no MVP (`sessionId` na encomenda); multi-sessão
    fica para fase posterior.
 6. Cada venda regista a sua origem (`SalesChannel`): marketplace, ambiente

@@ -34,6 +34,18 @@ export const assignRoleSchema = z.object({
   roleName: z.string().trim().min(3).max(60),
 });
 
+export const sellerInviteClaimSchema = z.object({
+  token: z.string().min(40).max(50).regex(/^[A-Za-z0-9_-]+$/),
+});
+
+export const sellerMembershipSchema = z.object({
+  memberId: z.string().uuid(),
+});
+
+export const sellerInviteIdSchema = z.object({
+  inviteId: z.string().uuid(),
+});
+
 export const suspendOrgSchema = z.object({
   organizationId: z.string().uuid(),
   reason: z.string().trim().min(3, "Motivo obrigatório.").max(500),

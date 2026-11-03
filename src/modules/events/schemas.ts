@@ -49,6 +49,12 @@ const eventVenueSchema = z.object({
   country: z.string().trim().length(2, "Código ISO do país.").default("AO"),
 });
 
+const normalTicketSchema = z.object({
+  basePriceCents: z.number().int().min(0).max(100_000_000),
+  quantity: z.number().int().positive().max(1_000_000),
+  maxPerBuyer: z.number().int().min(1).max(1_000_000).default(10),
+});
+
 const calendarStartSchema = z.coerce.date().refine(
   (date) => date.getUTCHours() === 0 && date.getUTCMinutes() === 0 &&
     date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0,
@@ -65,6 +71,7 @@ export const createOrganizerEventSchema = createEventSchema.extend({
   venue: eventVenueSchema,
   startsAt: calendarStartSchema,
   endsAt: calendarEndSchema,
+  normalTicket: normalTicketSchema,
 }).refine(
   (event) => event.endsAt > event.startsAt,
   { message: "O fim do evento deve ser posterior ao início.", path: ["endsAt"] },
@@ -101,6 +108,7 @@ export const createPlatformEventSchema = createEventSchema.extend({
   venue: eventVenueSchema,
   startsAt: calendarStartSchema,
   endsAt: calendarEndSchema,
+  normalTicket: normalTicketSchema,
 }).refine((v) => v.endsAt > v.startsAt, {
   message: "endsAt deve ser posterior a startsAt.",
   path: ["endsAt"],

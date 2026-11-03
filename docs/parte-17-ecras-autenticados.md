@@ -27,7 +27,8 @@ com o token rotativo e devolve apenas a imagem:
 
 1. **Reserva** — escolhe tipo/quantidade; servidor valida lote aberto,
    disponibilidade e limite por comprador; TTL de 10 min mostrado ao vivo.
-2. **Identificação** — comprador + todos os titulares (comprador ≠ titular);
+2. **Identificação** — o nome e email do comprador vêm da conta autenticada;
+   o comprador identifica todos os titulares (comprador ≠ titular).
    `checkoutIdempotencyKey = crypto.randomUUID()` gerada **em memória do
    componente** (nunca localStorage).
 3. **Pagamento** — resumo recebido do servidor (subtotal, taxa, total) é

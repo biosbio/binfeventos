@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import type {
   PaymentAdapter,
+  PaymentMethodType,
   InitiatePaymentInput,
   InitiatePaymentResult,
   RefundInput,
@@ -32,6 +33,18 @@ interface SandboxConfig {
 export class SandboxAdapter implements PaymentAdapter {
   readonly code = "sandbox";
   readonly country = "GLOBAL";
+  readonly supportedMethods: readonly PaymentMethodType[] = [
+    "CARD",
+    "MOBILE_MONEY",
+    "DIGITAL_WALLET",
+    "BANK_TRANSFER",
+  ];
+
+  isConfigured(adapterConfig: Record<string, unknown>): boolean {
+    return process.env.NODE_ENV !== "production" &&
+      typeof adapterConfig.webhookSecret === "string" &&
+      adapterConfig.webhookSecret.length >= 32;
+  }
 
   async initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     const providerRef = `sbx_${input.paymentId}_${input.idempotencyKey.slice(0, 8)}`;

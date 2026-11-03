@@ -89,40 +89,81 @@ async function createEventForOrganization(
     throw new BusinessRuleError("O fim do evento deve ser posterior ao início.");
   }
 
-  const event = await prisma.event.create({
-    data: {
-      organizationId,
-      name: input.name,
-      slug,
-      description: input.description ?? null,
-      category: input.category,
-      coverImageUrl: input.coverImageUrl ?? null,
-      entryRules: input.entryRules ?? null,
-      terms: input.terms ?? null,
-      responsibleUserId: ctx.userId,
-      status: "DRAFT",
-      sessions: {
-        create: {
-          startsAt: input.startsAt,
-          endsAt: input.endsAt,
-          venue: {
-            create: {
-              organizationId,
-              name: input.venue.name,
-              address: input.venue.address ?? null,
-              city: input.venue.city,
-              country: input.venue.country,
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { currency: true },
+  });
+  if (!organization) throw new NotFoundError("Organização");
+
+  const event = await prisma.$transaction(async (tx) => {
+    const createdEvent = await tx.event.create({
+      data: {
+        organizationId,
+        name: input.name,
+        slug,
+        description: input.description ?? null,
+        category: input.category,
+        coverImageUrl: input.coverImageUrl ?? null,
+        entryRules: input.entryRules ?? null,
+        terms: input.terms ?? null,
+        responsibleUserId: ctx.userId,
+        status: "DRAFT",
+        sessions: {
+          create: {
+            startsAt: input.startsAt,
+            endsAt: input.endsAt,
+            venue: {
+              create: {
+                organizationId,
+                name: input.venue.name,
+                address: input.venue.address ?? null,
+                city: input.venue.city,
+                country: input.venue.country,
+              },
             },
           },
         },
       },
-    },
-    select: {
-      id: true,
-      slug: true,
-      status: true,
-      sessions: { select: { id: true, venueId: true } },
-    },
+      select: {
+        id: true,
+        slug: true,
+        status: true,
+        sessions: { select: { id: true, venueId: true } },
+      },
+    });
+    const ticketType = await tx.ticketType.create({
+      data: {
+        eventId: createdEvent.id,
+        organizationId,
+        name: "Bilhete normal",
+        category: "NORMAL",
+        basePriceCents: input.normalTicket.basePriceCents,
+        currency: organization.currency,
+        requiresIdentity: true,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    const batch = await tx.ticketBatch.create({
+      data: {
+        ticketTypeId: ticketType.id,
+        name: "Venda contínua",
+        quantity: input.normalTicket.quantity,
+        maxPerBuyer: input.normalTicket.maxPerBuyer,
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    await tx.ticketInventory.createMany({
+      data: createdEvent.sessions.map((session) => ({
+        sessionId: session.id,
+        ticketTypeId: ticketType.id,
+        batchId: batch.id,
+        totalQuantity: input.normalTicket.quantity,
+      })),
+    });
+
+    return createdEvent;
   });
 
   await writeAudit({
@@ -144,7 +185,7 @@ export async function createPlatformEvent(
 
   const organization = await prisma.organization.findUnique({
     where: { slug: "binf-eventos" },
-    select: { id: true },
+    select: { id: true, currency: true },
   });
   if (!organization) throw new NotFoundError("Organização central");
 
@@ -159,40 +200,75 @@ export async function createPlatformEvent(
     throw new BusinessRuleError("O fim do evento deve ser posterior ao início.");
   }
 
-  const event = await prisma.event.create({
-    data: {
-      organizationId: organization.id,
-      name: input.name,
-      slug,
-      description: input.description ?? null,
-      category: input.category,
-      coverImageUrl: input.coverImageUrl ?? null,
-      entryRules: input.entryRules ?? null,
-      terms: input.terms ?? null,
-      responsibleUserId: ctx.userId,
-      status: "DRAFT",
-      sessions: {
-        create: {
-          startsAt: input.startsAt,
-          endsAt: input.endsAt,
-          venue: {
-            create: {
-              organizationId: organization.id,
-              name: input.venue.name,
-              address: input.venue.address ?? null,
-              city: input.venue.city,
-              country: input.venue.country,
+  const event = await prisma.$transaction(async (tx) => {
+    const createdEvent = await tx.event.create({
+      data: {
+        organizationId: organization.id,
+        name: input.name,
+        slug,
+        description: input.description ?? null,
+        category: input.category,
+        coverImageUrl: input.coverImageUrl ?? null,
+        entryRules: input.entryRules ?? null,
+        terms: input.terms ?? null,
+        responsibleUserId: ctx.userId,
+        status: "DRAFT",
+        sessions: {
+          create: {
+            startsAt: input.startsAt,
+            endsAt: input.endsAt,
+            venue: {
+              create: {
+                organizationId: organization.id,
+                name: input.venue.name,
+                address: input.venue.address ?? null,
+                city: input.venue.city,
+                country: input.venue.country,
+              },
             },
           },
         },
       },
-    },
-    select: {
-      id: true,
-      slug: true,
-      status: true,
-      sessions: { select: { id: true, venueId: true } },
-    },
+      select: {
+        id: true,
+        slug: true,
+        status: true,
+        sessions: { select: { id: true, venueId: true } },
+      },
+    });
+    const ticketType = await tx.ticketType.create({
+      data: {
+        eventId: createdEvent.id,
+        organizationId: organization.id,
+        name: "Bilhete normal",
+        category: "NORMAL",
+        basePriceCents: input.normalTicket.basePriceCents,
+        currency: organization.currency,
+        requiresIdentity: true,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    const batch = await tx.ticketBatch.create({
+      data: {
+        ticketTypeId: ticketType.id,
+        name: "Venda contínua",
+        quantity: input.normalTicket.quantity,
+        maxPerBuyer: input.normalTicket.maxPerBuyer,
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    await tx.ticketInventory.createMany({
+      data: createdEvent.sessions.map((session) => ({
+        sessionId: session.id,
+        ticketTypeId: ticketType.id,
+        batchId: batch.id,
+        totalQuantity: input.normalTicket.quantity,
+      })),
+    });
+
+    return createdEvent;
   });
 
   await writeAudit({

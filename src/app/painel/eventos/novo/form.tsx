@@ -21,11 +21,13 @@ type Option = { code: string; name: string };
 export default function NewEventForm({
   needsOrganization,
   initialCountry,
+  initialCurrency,
   countryOptions,
   currencyOptions,
 }: {
   needsOrganization: boolean;
   initialCountry: string;
+  initialCurrency: string;
   countryOptions: Option[];
   currencyOptions: Option[];
 }) {
@@ -35,7 +37,7 @@ export default function NewEventForm({
   const [organizationSlug, setOrganizationSlug] = useState("");
   const [organizationSlugEdited, setOrganizationSlugEdited] = useState(false);
   const [organizationCountry, setOrganizationCountry] = useState(initialCountry);
-  const [organizationCurrency, setOrganizationCurrency] = useState("XOF");
+  const [organizationCurrency, setOrganizationCurrency] = useState(initialCurrency);
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -49,6 +51,8 @@ export default function NewEventForm({
   const [venueAddress, setVenueAddress] = useState("");
   const [venueCity, setVenueCity] = useState("");
   const [venueCountry, setVenueCountry] = useState(initialCountry);
+  const [normalTicketPrice, setNormalTicketPrice] = useState("");
+  const [normalTicketQuantity, setNormalTicketQuantity] = useState("");
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +103,10 @@ export default function NewEventForm({
           slug: slug || undefined,
           description: description || undefined,
           category,
+          normalTicket: {
+            basePriceCents: Math.round(Number(normalTicketPrice) * 100),
+            quantity: Number(normalTicketQuantity),
+          },
           coverImageUrl: uploadedCoverUrl,
           venue: {
             name: venueName,
@@ -210,9 +218,10 @@ export default function NewEventForm({
                     <option value="CONCERT">Concerto</option><option value="CONFERENCE">Conferência</option><option value="SPORT">Desporto</option><option value="THEATER">Teatro</option><option value="FESTIVAL">Festival</option><option value="WORKSHOP">Workshop</option><option value="OTHER">Outro</option>
                   </select>
                 </div>
-                <fieldset className="form-field">
+                <fieldset className="event-create-duration">
                   <legend>Duração do evento *</legend>
-                  <label>
+                  <div className="event-duration-options">
+                  <label className={eventDuration === "one-day" ? "event-duration-option is-selected" : "event-duration-option"}>
                     <input
                       type="radio"
                       name="event-duration"
@@ -220,9 +229,9 @@ export default function NewEventForm({
                       checked={eventDuration === "one-day"}
                       onChange={() => setEventDuration("one-day")}
                     />
-                    {" "}Um dia
+                    <span><strong>Um dia</strong><small>Escolher uma única data</small></span>
                   </label>
-                  <label>
+                  <label className={eventDuration === "multiple-days" ? "event-duration-option is-selected" : "event-duration-option"}>
                     <input
                       type="radio"
                       name="event-duration"
@@ -230,8 +239,9 @@ export default function NewEventForm({
                       checked={eventDuration === "multiple-days"}
                       onChange={() => setEventDuration("multiple-days")}
                     />
-                    {" "}Vários dias
+                    <span><strong>Vários dias</strong><small>Definir início e fim</small></span>
                   </label>
+                  </div>
                 </fieldset>
                 <div className="form-field">
                   <label htmlFor="event-start-date">
@@ -276,6 +286,19 @@ export default function NewEventForm({
                   <select id="event-venue-country" required value={venueCountry} onChange={(event) => setVenueCountry(event.target.value)}>
                     {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
                   </select>
+                </div>
+                <h3>Bilhete normal</h3>
+                <p className="form-help">O bilhete normal será criado junto com o evento. O preço fica associado à moeda da organização.</p>
+                <div className="event-create-ticket-grid">
+                  <div className="form-field">
+                    <label htmlFor="event-ticket-price">Preço do bilhete ({organizationCurrency}) *</label>
+                    <input id="event-ticket-price" type="number" required min="0" max="1000000" step="0.01" value={normalTicketPrice} onChange={(event) => setNormalTicketPrice(event.target.value)} />
+                    <span className="form-help">Use 0 para entrada gratuita.</span>
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="event-ticket-quantity">Quantidade disponível *</label>
+                    <input id="event-ticket-quantity" type="number" required min="1" max="1000000" step="1" value={normalTicketQuantity} onChange={(event) => setNormalTicketQuantity(event.target.value)} />
+                  </div>
                 </div>
                 <div className="form-field">
                   <label htmlFor="event-description">Descrição do evento</label>

@@ -2,7 +2,8 @@ import { prisma } from "@/shared/lib/prisma";
 import { AppError, BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from "@/shared/errors";
 import { writeAudit, assertOrgActive, sanitizeForAudit } from "@/shared/audit";
 import { markPanelVerified, type AuthContext } from "@/shared/auth";
-import { rateLimit, verifyPassword } from "@/shared/lib/security";
+import { randomBytes } from "node:crypto";
+import { rateLimit, sha256, verifyPassword } from "@/shared/lib/security";
 import type { CreateOrgInput, InviteMemberInput } from "./schemas";
 
 // ============================================================
@@ -233,5 +234,146 @@ export async function listMembers(ctx: AuthContext) {
       role: { select: { name: true, isSystem: true } },
     },
     orderBy: { invitedAt: "asc" },
+  });
+}
+
+export async function createBoxOfficeSellerInvite(ctx: AuthContext): Promise<{
+  id: string;
+  token: string;
+  expiresAt: Date;
+}> {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  await assertOrgActive(ctx.organizationId);
+
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const invite = await prisma.boxOfficeSellerInvite.create({
+    data: {
+      organizationId: ctx.organizationId,
+      createdByUserId: ctx.userId,
+      tokenHash: sha256(token),
+      expiresAt,
+    },
+    select: { id: true, expiresAt: true },
+  });
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "org.boxoffice_seller_invite_created",
+    after: { inviteId: invite.id, expiresAt },
+  });
+  return { ...invite, token };
+}
+
+export async function getBoxOfficeSellerInvite(token: string) {
+  if (!/^[A-Za-z0-9_-]{40,50}$/.test(token)) throw new NotFoundError("Convite");
+  const invite = await prisma.boxOfficeSellerInvite.findUnique({
+    where: { tokenHash: sha256(token) },
+    select: {
+      id: true,
+      organizationId: true,
+      expiresAt: true,
+      revokedAt: true,
+      organization: { select: { name: true, status: true } },
+    },
+  });
+  if (
+    !invite ||
+    invite.revokedAt ||
+    invite.expiresAt <= new Date() ||
+    invite.organization.status !== "ACTIVE"
+  ) {
+    throw new NotFoundError("Convite");
+  }
+  return { id: invite.id, organizationId: invite.organizationId, organizationName: invite.organization.name, expiresAt: invite.expiresAt };
+}
+
+export async function requestBoxOfficeSellerAccess(ctx: AuthContext, token: string): Promise<"pending" | "approved"> {
+  const invite = await getBoxOfficeSellerInvite(token);
+  const role = await prisma.role.findFirst({
+    where: { name: "BOX_OFFICE_OPERATOR", isSystem: true, organizationId: null },
+    select: { id: true },
+  });
+  if (!role) throw new BusinessRuleError("Papel de vendedor em falta — execute o seed.");
+
+  const existing = await prisma.orgMembership.findUnique({
+    where: { organizationId_userId: { organizationId: invite.organizationId, userId: ctx.userId } },
+    select: { id: true, acceptedAt: true, role: { select: { name: true } } },
+  });
+  if (existing) {
+    if (existing.role.name !== "BOX_OFFICE_OPERATOR") {
+      throw new ConflictError("Já existe uma associação diferente com esta organização.");
+    }
+    return existing.acceptedAt ? "approved" : "pending";
+  }
+
+  await prisma.orgMembership.create({
+    data: {
+      organizationId: invite.organizationId,
+      userId: ctx.userId,
+      roleId: role.id,
+      acceptedAt: null,
+    },
+  });
+  await writeAudit({
+    organizationId: invite.organizationId,
+    actorUserId: ctx.userId,
+    action: "org.boxoffice_seller_requested",
+    after: { inviteId: invite.id },
+  });
+  return "pending";
+}
+
+export async function approveBoxOfficeSeller(ctx: AuthContext, memberId: string): Promise<void> {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const result = await prisma.orgMembership.updateMany({
+    where: {
+      id: memberId,
+      organizationId: ctx.organizationId,
+      acceptedAt: null,
+      role: { name: "BOX_OFFICE_OPERATOR", isSystem: true },
+      user: { status: "ACTIVE" },
+    },
+    data: { acceptedAt: new Date() },
+  });
+  if (result.count !== 1) throw new NotFoundError("Pedido de vendedor");
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "org.boxoffice_seller_approved",
+    after: { memberId },
+  });
+}
+
+export async function revokeBoxOfficeSeller(ctx: AuthContext, memberId: string): Promise<void> {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const result = await prisma.orgMembership.deleteMany({
+    where: {
+      id: memberId,
+      organizationId: ctx.organizationId,
+      role: { name: "BOX_OFFICE_OPERATOR", isSystem: true },
+    },
+  });
+  if (result.count !== 1) throw new NotFoundError("Vendedor");
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "org.boxoffice_seller_revoked",
+    after: { memberId },
+  });
+}
+
+export async function revokeBoxOfficeSellerInvite(ctx: AuthContext, inviteId: string): Promise<void> {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const result = await prisma.boxOfficeSellerInvite.updateMany({
+    where: { id: inviteId, organizationId: ctx.organizationId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (result.count !== 1) throw new NotFoundError("Link de convite");
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "org.boxoffice_seller_invite_revoked",
+    after: { inviteId },
   });
 }

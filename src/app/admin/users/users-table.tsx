@@ -11,7 +11,7 @@ export type AdminUserRow = {
   status: "ACTIVE" | "SUSPENDED" | "CLOSED";
   platformRole: "USER" | "PLATFORM_ADMIN";
   createdAt: string;
-  memberships: { organization: string; role: string }[];
+  memberships: { id: string; organization: string; role: string; acceptedAt: string | null }[];
 };
 
 function dateLabel(value: string) {
@@ -24,6 +24,7 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [pending, startTransition] = useTransition();
+  const [membershipBusyId, setMembershipBusyId] = useState<string | null>(null);
 
   async function updateUser(payload: { userId: string; fullName?: string; phone?: string | null; status?: AdminUserRow["status"]; totpCode?: string }) {
     setError("");
@@ -45,6 +46,34 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
     setEditingId(null);
     setSuccess("Dados do utilizador atualizados.");
     startTransition(() => router.refresh());
+  }
+
+  async function updateSellerMembership(membershipId: string, action: "approve" | "revoke") {
+    setMembershipBusyId(membershipId);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ membershipId, action }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        if (result.code === "PANEL_STEP_UP_REQUIRED") {
+          window.location.href = "/acesso-painel?next=%2Fadmin%2Fusers";
+          return;
+        }
+        setError(result.message ?? "Não foi possível atualizar o acesso do vendedor.");
+        return;
+      }
+      setSuccess(action === "approve" ? "Vendedor autorizado pela administração central." : "Acesso de vendedor removido.");
+      startTransition(() => router.refresh());
+    } catch {
+      setError("Erro de rede ao atualizar o acesso do vendedor.");
+    } finally {
+      setMembershipBusyId(null);
+    }
   }
 
   if (users.length === 0) {
@@ -76,7 +105,24 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
               <strong>Organizações</strong>
               {user.memberships.length
                 ? user.memberships.map((membership, index) => (
-                    <span key={`${user.id}-${index}`}>{membership.organization} · {membership.role}</span>
+                    <div className="admin-user-membership-row" key={`${user.id}-${index}`}>
+                      <span>
+                        {membership.organization} · {membership.role}
+                        {membership.role === "BOX_OFFICE_OPERATOR" && !membership.acceptedAt ? " · Pedido pendente" : ""}
+                      </span>
+                      {membership.role === "BOX_OFFICE_OPERATOR" ? (
+                        <div className="admin-user-actions">
+                          {!membership.acceptedAt ? (
+                            <button className="button button-primary" type="button" disabled={pending || membershipBusyId === membership.id} onClick={() => void updateSellerMembership(membership.id, "approve")}>
+                              Autorizar vendedor
+                            </button>
+                          ) : <span className="status-pill">Vendedor autorizado</span>}
+                          <button className="button button-secondary" type="button" disabled={pending || membershipBusyId === membership.id} onClick={() => void updateSellerMembership(membership.id, "revoke")}>
+                            {membership.acceptedAt ? "Remover acesso" : "Rejeitar pedido"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   ))
                 : <span>Sem organização associada</span>}
             </div>

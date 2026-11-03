@@ -20,6 +20,13 @@ export type ProviderResultStatus =
   | "EXPIRED"
   | "UNKNOWN";
 
+export type PaymentMethodType =
+  | "CARD"
+  | "MOBILE_MONEY"
+  | "DIGITAL_WALLET"
+  | "BANK_TRANSFER"
+  | "CASH";
+
 export interface InitiatePaymentInput {
   /** Referência normalizada da transação na nossa base. */
   paymentId: string;
@@ -70,7 +77,10 @@ export interface WebhookPayload {
 export interface PaymentAdapter {
   readonly code: string;
   readonly country: string;
+  readonly supportedMethods: readonly PaymentMethodType[];
+  readonly supportedCurrencies?: readonly string[];
 
+  isConfigured(adapterConfig: Record<string, unknown>): boolean;
   initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>;
   refund(input: RefundInput): Promise<RefundResult>;
   /** Valida assinatura do webhook (nunca confiar no corpo sem validar). */

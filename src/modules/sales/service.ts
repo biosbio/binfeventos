@@ -28,11 +28,6 @@ import type { CreateOrderInput } from "./schemas";
 // 6. Registo da origem (SalesChannel) em cada venda.
 // ============================================================
 
-/** Taxa de serviço da plataforma (%) — config por organização no futuro. */
-const SERVICE_FEE_BPS = 500; // 5,00%
-/** Comissão da plataforma (%) — modelo combinado aprovado. */
-const COMMISSION_BPS = 800; // 8,00%
-
 /** Gera número de encomenda legível e resistente a concorrência. */
 function nextOrderNumber(): string {
   const year = new Date().getFullYear();
@@ -97,17 +92,29 @@ export async function createOrder(
   }
   const organizationId = hold.organizationId;
   await assertOrgActive(organizationId);
+  const actor = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { fullName: true, email: true, phone: true },
+  });
+  if (!actor) throw new NotFoundError("Conta");
+
   let buyerUserId: string | null = ctx.userId;
+  let buyerName = actor.fullName;
+  let buyerEmail = actor.email;
+  let buyerPhone = actor.phone;
   if (isOrgOperator) {
-    const actor = await prisma.user.findUnique({
-      where: { id: ctx.userId },
-      select: { email: true },
-    });
-    const purchaserEmail = (input.buyerEmail ?? input.attendees[0]?.email)?.trim().toLowerCase();
-    if (!purchaserEmail || purchaserEmail !== actor?.email.toLowerCase()) {
-      const purchaser = purchaserEmail
-        ? await prisma.user.findUnique({ where: { email: purchaserEmail }, select: { id: true } })
-        : null;
+    if (!input.buyerName || !input.buyerEmail) {
+      throw new BusinessRuleError("Informe os dados do comprador para a venda presencial.");
+    }
+    buyerName = input.buyerName;
+    buyerEmail = input.buyerEmail;
+    buyerPhone = input.buyerPhone ?? null;
+    const purchaserEmail = buyerEmail.trim().toLowerCase();
+    if (purchaserEmail !== actor.email.toLowerCase()) {
+      const purchaser = await prisma.user.findUnique({
+        where: { email: purchaserEmail },
+        select: { id: true },
+      });
       buyerUserId = purchaser?.id ?? null;
     }
   }
@@ -143,10 +150,10 @@ export async function createOrder(
   const unitPriceCents = batch.priceCents ?? ticketType.basePriceCents;
   const lineSubtotalCents = unitPriceCents * hold.quantity;
   const subtotalCents = lineSubtotalCents;
-  const serviceFeeCents = Math.round((subtotalCents * SERVICE_FEE_BPS) / 10_000);
-  const commissionCents = Math.round((subtotalCents * COMMISSION_BPS) / 10_000);
+  const serviceFeeCents = 0;
+  const commissionCents = 0;
   const taxCents = 0; // regra fiscal por mercado — Domínio 5 (Parte 14)
-  const totalCents = subtotalCents + serviceFeeCents + taxCents;
+  const totalCents = subtotalCents + taxCents;
 
   const order = await prisma.$transaction(async (tx) => {
     // Revalida o hold dentro da transação (ninguém o confirmou entretanto)
@@ -163,9 +170,9 @@ export async function createOrder(
         organizationId,
         orderNumber: nextOrderNumber(),
         buyerUserId,
-        buyerName: input.buyerName,
-        buyerEmail: input.buyerEmail,
-        buyerPhone: input.buyerPhone ?? null,
+        buyerName,
+        buyerEmail,
+        buyerPhone,
         status: "RESERVED",
         channel: "MARKETPLACE",
         subtotalCents,

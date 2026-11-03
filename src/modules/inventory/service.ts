@@ -57,6 +57,7 @@ export async function createTicketType(ctx: AuthContext, input: CreateTicketType
     include: {
       organization: { select: { currency: true } },
       sessions: { select: { id: true } },
+      ticketTypes: { select: { category: true } },
     },
   });
   if (!event || event.organizationId !== organizationId) throw new NotFoundError("Evento");
@@ -67,6 +68,9 @@ export async function createTicketType(ctx: AuthContext, input: CreateTicketType
     throw new BusinessRuleError(
       "Atualize as datas do evento para uma única duração no painel antes de publicar os bilhetes.",
     );
+  }
+  if (input.category === "NORMAL" && event.ticketTypes.some((ticketType) => ticketType.category === "NORMAL")) {
+    throw new BusinessRuleError("O bilhete normal já foi configurado durante a criação do evento.");
   }
 
   const ticketType = await prisma.$transaction(async (tx) => {

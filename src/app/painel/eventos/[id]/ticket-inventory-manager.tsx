@@ -46,7 +46,7 @@ export default function TicketInventoryManager({
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("NORMAL");
+  const [category, setCategory] = useState("VIP");
   const [description, setDescription] = useState("");
   const [basePrice, setBasePrice] = useState("0");
   const [requiresIdentity, setRequiresIdentity] = useState(true);
@@ -59,6 +59,7 @@ export default function TicketInventoryManager({
   const [savingQuantityId, setSavingQuantityId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState("100");
   const [maxPerBuyer, setMaxPerBuyer] = useState("10");
+  const hasNormalTicket = ticketTypes.some((ticketType) => ticketType.category === "NORMAL");
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -176,8 +177,9 @@ export default function TicketInventoryManager({
       <div>
         <h2>Tipos de bilhete</h2>
         <p className="form-help">
-          Crie tipos com nomes e condições próprias — por exemplo entrada geral,
-          bilhete gratuito, VIP, mesa, combo ou criança. O comprador verá
+          O bilhete normal, com preço e quantidade definidos ao criar o evento,
+          aparece aqui. Pode acrescentar opções como VIP, mesa, combo ou criança.
+          O comprador verá
           essas informações antes de reservar. A venda começa automaticamente
           quando o evento for publicado e pode ser terminada aqui.
           Moeda da organização: {currency}.
@@ -265,42 +267,64 @@ export default function TicketInventoryManager({
         <div className="empty-state">Ainda não há tipos de bilhete configurados.</div>
       )}
 
-      <form className="panel" style={{ display: "grid", gap: 14 }} onSubmit={createTicketType}>
-        <h3>Criar tipo de bilhete</h3>
+      <form className="panel ticket-type-form" onSubmit={createTicketType}>
+        <div className="ticket-type-form-heading">
+          <span className="section-kicker">NOVO BILHETE</span>
+          <h3>Adicionar outro tipo</h3>
+          <p>Crie uma opção adicional ao bilhete normal, como VIP, estudante ou acesso especial.</p>
+        </div>
         {typeError ? <p className="form-error" role="alert">{typeError}</p> : null}
         {typeSuccess ? <p className="form-success" role="status">{typeSuccess}</p> : null}
         <div className="form-field">
           <label htmlFor="ticket-name">Nome que o comprador verá *</label>
-          <input id="ticket-name" required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Entrada geral, Mesa VIP para 6, Combo adulto + criança" />
+          <input id="ticket-name" required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Bilhete VIP, Mesa para 6 pessoas" />
         </div>
-        <div className="form-field">
-          <label htmlFor="ticket-category">Categoria</label>
-          <select id="ticket-category" value={category} onChange={(event) => setCategory(event.target.value)}>
-            {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </div>
+        <fieldset className="ticket-category-field">
+          <legend>Categoria do bilhete</legend>
+          <div className="ticket-category-options">
+            {Object.entries(CATEGORY_LABELS)
+              .filter(([value]) => value !== "NORMAL" || !hasNormalTicket)
+              .map(([value, label]) => (
+                <label key={value} className={category === value ? "ticket-category-option is-selected" : "ticket-category-option"}>
+                  <input
+                    type="radio"
+                    name="ticket-category"
+                    value={value}
+                    checked={category === value}
+                    onChange={() => setCategory(value)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+          </div>
+        </fieldset>
         <div className="form-field">
           <label htmlFor="ticket-description">Descrição e condições</label>
           <textarea id="ticket-description" rows={3} maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Explique o que está incluído, quantidade de pessoas, faixa etária ou condições de acesso." />
         </div>
-        <div className="form-field">
-          <label htmlFor="ticket-price">Preço por bilhete ({currency})</label>
-          <input id="ticket-price" type="number" min="0" step="0.01" required value={basePrice} onChange={(event) => setBasePrice(event.target.value)} />
-          <span className="form-help">Use 0 para bilhetes gratuitos.</span>
+        <div className="ticket-pricing-grid">
+          <div className="form-field">
+            <label htmlFor="ticket-price">Preço por bilhete *</label>
+            <div className="ticket-price-input">
+              <input id="ticket-price" type="number" min="0" step="0.01" required value={basePrice} onChange={(event) => setBasePrice(event.target.value)} />
+              <span>{currency}</span>
+            </div>
+            <span className="form-help">Use 0 para bilhetes gratuitos.</span>
+          </div>
+          <div className="form-field">
+            <label htmlFor="ticket-quantity">Quantidade disponível *</label>
+            <input id="ticket-quantity" type="number" required min="1" max="1000000" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+          </div>
+          <div className="form-field">
+            <label htmlFor="ticket-max-per-buyer">Limite por comprador *</label>
+            <input id="ticket-max-per-buyer" type="number" required min="1" max="1000000" value={maxPerBuyer} onChange={(event) => setMaxPerBuyer(event.target.value)} />
+          </div>
         </div>
-        <div className="form-field">
-          <label htmlFor="ticket-quantity">Quantidade disponível *</label>
-          <input id="ticket-quantity" type="number" required min="1" max="1000000" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
-        </div>
-        <div className="form-field">
-          <label htmlFor="ticket-max-per-buyer">Limite por comprador *</label>
-          <input id="ticket-max-per-buyer" type="number" required min="1" max="1000000" value={maxPerBuyer} onChange={(event) => setMaxPerBuyer(event.target.value)} />
-        </div>
-        <label>
+        <label className="ticket-identity-option">
           <input type="checkbox" checked={requiresIdentity} onChange={(event) => setRequiresIdentity(event.target.checked)} />
-          {" "}Pedir identificação do titular
+          <span><strong>Pedir identificação do titular</strong><small>Recolher o nome de cada participante na compra.</small></span>
         </label>
-        <button className="button button-secondary" type="submit" disabled={typeBusy || sessions.length !== 1}>
+        <button className="button button-primary ticket-type-submit" type="submit" disabled={typeBusy || sessions.length !== 1}>
           {typeBusy ? "A publicar…" : "Publicar bilhete e iniciar venda"}
         </button>
       </form>

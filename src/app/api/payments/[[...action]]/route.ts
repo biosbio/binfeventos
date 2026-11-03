@@ -11,8 +11,6 @@ import { z } from "zod";
 //   GET  /api/payments/pending            — pagamentos UNDER_REVIEW
 // ============================================================
 
-const UUID = z.string().uuid();
-
 function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const r = schema.safeParse(data);
   if (!r.success) {
@@ -67,6 +65,20 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
   const path = action.join("/");
 
   try {
+    if (path === "options") {
+      await requireAuth();
+      const url = new URL(_req.url);
+      const currency = url.searchParams.get("currency")?.toUpperCase();
+      if (!currency || !/^[A-Z]{3}$/.test(currency)) {
+        throw new ValidationError("Indique um código de moeda válido.");
+      }
+      const { listPaymentOptions } = await import("@/modules/payments/service");
+      const options = await listPaymentOptions(currency);
+      return NextResponse.json({ ok: true, options }, {
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+
     if (path === "pending") {
       const auth = await requirePermission("payment:review");
       const { prisma } = await import("@/shared/lib/prisma");

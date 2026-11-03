@@ -22,6 +22,12 @@ export async function SiteHeader() {
         {auth ? (
           <>
             <Link className="button button-secondary" href="/minha-conta">A minha conta</Link>
+            {auth.permissions.has("boxoffice:sell") ? (
+              <Link className="button button-secondary" href="/bilheteira">Bilheteira</Link>
+            ) : null}
+            {auth.permissions.has("org:invite") ? (
+              <Link className="button button-secondary" href="/painel/vendedores">Vendedores</Link>
+            ) : null}
             {canAccessOrganizerPanel ? (
               <Link className="button button-primary" href={isAdmin ? "/admin" : "/painel"}>
                 {isAdmin ? "Abrir administração" : "Painel do organizador"}

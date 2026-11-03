@@ -52,12 +52,14 @@ describe("createOrganizerEventSchema", () => {
     city: "Bissau",
     country: "GW",
   };
+  const normalTicket = { basePriceCents: 5000, quantity: 100 };
 
   it("exige a data do evento e um fim posterior ao início", () => {
     expect(createOrganizerEventSchema.safeParse({ name: "Show BINF" }).success).toBe(false);
     expect(createOrganizerEventSchema.safeParse({
       name: "Show BINF",
       venue,
+      normalTicket,
       startsAt: "2027-01-02T00:00:00.000Z",
       endsAt: "2027-01-02T23:59:59.999Z",
     }).success).toBe(true);
@@ -74,7 +76,21 @@ describe("createOrganizerEventSchema", () => {
     expect(createOrganizerEventSchema.safeParse({
       name: "Show BINF",
       venue,
+      normalTicket,
       startsAt: "2027-01-02T18:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(false);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      venue,
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(false);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      venue,
+      normalTicket: { basePriceCents: -1, quantity: 0 },
+      startsAt: "2027-01-02T00:00:00.000Z",
       endsAt: "2027-01-02T23:59:59.999Z",
     }).success).toBe(false);
   });
@@ -121,10 +137,16 @@ describe("sessionSchema", () => {
     };
 
     it("requires a valid initial session", () => {
-      expect(createPlatformEventSchema.safeParse({ name: "Evento central", venue, ...session }).success).toBe(true);
       expect(createPlatformEventSchema.safeParse({
         name: "Evento central",
         venue,
+        normalTicket: { basePriceCents: 0, quantity: 50 },
+        ...session,
+      }).success).toBe(true);
+      expect(createPlatformEventSchema.safeParse({
+        name: "Evento central",
+        venue,
+        normalTicket: { basePriceCents: 0, quantity: 50 },
         startsAt: session.endsAt,
         endsAt: session.startsAt,
       }).success).toBe(false);

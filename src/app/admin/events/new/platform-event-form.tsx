@@ -16,7 +16,7 @@ function nextCalendarDate(value: string): string | undefined {
 
 type CountryOption = { code: string; name: string };
 
-export default function PlatformEventForm({ countryOptions }: { countryOptions: CountryOption[] }) {
+export default function PlatformEventForm({ countryOptions, currency }: { countryOptions: CountryOption[]; currency: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -31,6 +31,8 @@ export default function PlatformEventForm({ countryOptions }: { countryOptions: 
   const [venueAddress, setVenueAddress] = useState("");
   const [venueCity, setVenueCity] = useState("");
   const [venueCountry, setVenueCountry] = useState("AO");
+  const [normalTicketPrice, setNormalTicketPrice] = useState("");
+  const [normalTicketQuantity, setNormalTicketQuantity] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -60,6 +62,10 @@ export default function PlatformEventForm({ countryOptions }: { countryOptions: 
           slug: slug || undefined,
           description: description || undefined,
           category,
+          normalTicket: {
+            basePriceCents: Math.round(Number(normalTicketPrice) * 100),
+            quantity: Number(normalTicketQuantity),
+          },
           coverImageUrl,
           venue: {
             name: venueName,
@@ -161,6 +167,19 @@ export default function PlatformEventForm({ countryOptions }: { countryOptions: 
           <select id="platform-venue-country" required value={venueCountry} onChange={(event) => setVenueCountry(event.target.value)}>
             {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
           </select>
+        </div>
+        <h2>Bilhete normal</h2>
+        <p className="form-help">O bilhete normal será criado junto com o evento. Moeda da organização central: {currency}.</p>
+        <div className="event-create-ticket-grid">
+          <div className="form-field">
+            <label htmlFor="platform-ticket-price">Preço do bilhete ({currency}) *</label>
+            <input id="platform-ticket-price" type="number" required min="0" max="1000000" step="0.01" value={normalTicketPrice} onChange={(event) => setNormalTicketPrice(event.target.value)} />
+            <span className="form-help">Use 0 para entrada gratuita.</span>
+          </div>
+          <div className="form-field">
+            <label htmlFor="platform-ticket-quantity">Quantidade disponível *</label>
+            <input id="platform-ticket-quantity" type="number" required min="1" max="1000000" step="1" value={normalTicketQuantity} onChange={(event) => setNormalTicketQuantity(event.target.value)} />
+          </div>
         </div>
         <button className="button button-primary" type="submit" disabled={busy}>
           {busy ? "A criar evento…" : "Criar rascunho"}

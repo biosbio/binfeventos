@@ -53,12 +53,13 @@ export default async function AdminUsersPage({
         platformRole: true,
         createdAt: true,
         memberships: {
-          where: { acceptedAt: { not: null } },
           select: {
+            id: true,
+            acceptedAt: true,
             organization: { select: { name: true } },
             role: { select: { name: true } },
           },
-          orderBy: { acceptedAt: "asc" },
+          orderBy: { invitedAt: "asc" },
         },
       },
     }),
@@ -74,8 +75,10 @@ export default async function AdminUsersPage({
     platformRole: user.platformRole,
     createdAt: user.createdAt.toISOString(),
     memberships: user.memberships.map((membership) => ({
+      id: membership.id,
       organization: membership.organization.name,
       role: membership.role.name,
+      acceptedAt: membership.acceptedAt?.toISOString() ?? null,
     })),
   }));
 
@@ -85,7 +88,7 @@ export default async function AdminUsersPage({
         <div>
           <span className="section-kicker">BINF EVENTOS · ADMINISTRAÇÃO CENTRAL</span>
           <h1>Gestão de utilizadores</h1>
-          <p>Consulta e administra contas da plataforma sem misturar permissões entre organizações.</p>
+          <p>Administre contas, veja pedidos de vendedores e controle os acessos de bilheteira em todas as organizações.</p>
         </div>
         <Link className="button button-secondary" href="/admin">Voltar ao painel</Link>
       </div>

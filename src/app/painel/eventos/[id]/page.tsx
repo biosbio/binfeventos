@@ -85,7 +85,7 @@ export default async function ManageEventPage({
   return (
     <>
       <SiteHeader />
-      <main className="container" style={{ padding: "48px 0 72px", maxWidth: 760 }}>
+      <main className="container event-manage-page">
         <span className="section-kicker">ÁREA DE ORGANIZAÇÃO · EVENTO</span>
         <h1>Gerir evento</h1>
         <p className="section-copy">

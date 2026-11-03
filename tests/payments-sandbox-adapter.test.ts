@@ -1,13 +1,38 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "crypto";
 import { SandboxAdapter } from "../src/modules/payments/adapters/sandbox";
+import { MulticaixaExpressAdapter } from "../src/modules/payments/adapters/multicaixa-express";
 
 // Testes de caracterização do adaptador sandbox — protegem a
 // interface PaymentAdapter contra regressões (Parte 18).
 
 const adapter = new SandboxAdapter();
 
+describe("MulticaixaExpressAdapter availability", () => {
+  const multicaixa = new MulticaixaExpressAdapter();
+
+  it("only exposes Mobile Money in AOA when fully configured", () => {
+    expect(multicaixa.supportedMethods).toEqual(["MOBILE_MONEY"]);
+    expect(multicaixa.supportedCurrencies).toEqual(["AOA"]);
+    expect(multicaixa.isConfigured({
+      baseUrl: "https://provider.example",
+      merchantToken: "token",
+      posId: "pos",
+      webhookSecret: "secret",
+    })).toBe(true);
+    expect(multicaixa.isConfigured({ baseUrl: "https://provider.example" })).toBe(false);
+  });
+});
+
 describe("SandboxAdapter.initiate", () => {
+  it("expõe métodos de teste apenas quando a chave de webhook está configurada", () => {
+    expect(adapter.supportedMethods).toContain("CARD");
+    expect(adapter.isConfigured({ webhookSecret: "s".repeat(32) })).toBe(
+      process.env.NODE_ENV !== "production",
+    );
+    expect(adapter.isConfigured({ webhookSecret: "short" })).toBe(false);
+  });
+
   it("gera providerRef determinístico e estado INITIATED para valor positivo", async () => {
     const r = await adapter.initiate({
       paymentId: "p-123",

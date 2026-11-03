@@ -6,7 +6,7 @@
 export const PERMISSIONS = [
   // Utilizadores e organizações (Domínio 1)
   { code: "org:manage", domain: "users", description: "Gerir a organização" },
-  { code: "org:invite", domain: "users", description: "Convidar membros" },
+  { code: "org:invite", domain: "users", description: "Gerir convites de vendedores" },
   { code: "org:role:assign", domain: "users", description: "Atribuir papéis" },
 
   // Eventos e sessões (Domínio 2)
@@ -93,6 +93,7 @@ export const SYSTEM_ROLES: Record<string, PermissionCode[]> = {
 
   // Organizador de eventos
   ORGANIZER: [
+    "org:invite",
     "event:create", "event:read", "event:update", "event:publish",
     "venue:manage", "session:manage",
     "ticketType:manage", "batch:manage", "seats:manage", "seats:block", "inventory:read",

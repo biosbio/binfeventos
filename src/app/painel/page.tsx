@@ -55,7 +55,10 @@ export default async function OrganizerPanelPage() {
             <h1>O seu painel</h1>
             <p>Acompanhe os seus eventos, atividade e operações num só lugar.</p>
           </div>
-          <div className="dashboard-heading-actions"><Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link></div>
+          <div className="dashboard-heading-actions">
+            {ctx.permissions.has("org:invite") ? <Link className="button button-secondary" href="/painel/vendedores">Gerir vendedores</Link> : null}
+            <Link className="button button-primary" href="/painel/eventos/novo">＋ Criar evento</Link>
+          </div>
         </div>
 
         <div className="dashboard-stats">

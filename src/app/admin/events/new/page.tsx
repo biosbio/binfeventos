@@ -1,8 +1,13 @@
 import Link from "next/link";
 import PlatformEventForm from "./platform-event-form";
 import { getCountryOptions } from "@/shared/lib/locale-options";
+import { prisma } from "@/shared/lib/prisma";
 
-export default function NewPlatformEventPage() {
+export default async function NewPlatformEventPage() {
+  const organization = await prisma.organization.findUnique({
+    where: { slug: "binf-eventos" },
+    select: { currency: true },
+  });
   return (
     <main className="container dashboard-page">
       <div className="dashboard-heading">
@@ -15,7 +20,7 @@ export default function NewPlatformEventPage() {
           <Link className="button button-secondary" href="/admin">Voltar à administração</Link>
         </div>
       </div>
-      <PlatformEventForm countryOptions={getCountryOptions()} />
+      <PlatformEventForm countryOptions={getCountryOptions()} currency={organization?.currency ?? "XOF"} />
     </main>
   );
 }

@@ -19,7 +19,7 @@
 |---|---|
 | `src/modules/inventory/schemas.ts` | Zod: tipos, lotes, holds — sem valores do cliente |
 | `src/modules/inventory/service.ts` | Núcleo transacional: `FOR UPDATE`, idempotência, VERIFYING, expiração |
-| `src/modules/sales/schemas.ts` | Checkout: hold + comprador + titulares (nada monetário) |
+| `src/modules/sales/schemas.ts` | Checkout: hold + titulares; comprador vem da conta autenticada (nada monetário) |
 | `src/modules/sales/service.ts` | Motor de encomendas: cálculo server-side, OrderStatus, canal |
 | `src/app/api/marketplace/[[...action]]/route.ts` | Disponibilidade, holds, checkout, consulta, cancelamento |
 | `src/app/api/catalog/[[...action]]/route.ts` | Tipos, lotes, job de expiração |
@@ -28,7 +28,9 @@
 
 ### Configuração pelo organizador
 
-Na gestão de cada evento, o organizador pode criar tipos de bilhete com nome,
+Na criação de cada evento, o organizador define o preço e a quantidade do
+bilhete normal; este tipo é criado atomicamente com o evento e a sessão inicial,
+na moeda da organização. Depois, pode adicionar tipos de bilhete com nome,
 categoria, descrição/condições, preço e exigência de identificação. Nomes e
 descrições personalizadas permitem explicar entradas gratuitas, VIP, mesas,
 combos e bilhetes infantis. Cada tipo tem preço, quantidade e limite por
@@ -76,10 +78,10 @@ dentro de cada transação (múltiplos workers não duplicam).
 unitPriceCents   = batch.priceCents ?? ticketType.basePriceCents  (base de dados)
 lineSubtotal     = unitPrice × quantity
 subtotal         = Σ linhas (mono-sessão no MVP)
-serviceFee       = 5% (SERVICE_FEE_BPS — configurável)
-commission       = 8% (COMMISSION_BPS — modelo combinado)
+serviceFee       = 0 (não cobrada ao comprador)
+commission       = 0 até existir acordo aprovado para o evento
 tax              = 0 (regra fiscal por mercado — Parte 14)
-total            = subtotal + serviceFee + tax
+total            = subtotal + tax
 ```
 
 Nenhum destes valores é aceito do cliente; o resumo é devolvido para
@@ -119,8 +121,10 @@ conferência, não para cálculo.
 1. `maxPerBuyer` hoje valida o total de reservas por sessão, não por
    comprador individual — na Parte 14 o hold ganha `buyerKey` (cookie/conta)
    para limite exato por pessoa.
-2. `SERVICE_FEE_BPS`/`COMMISSION_BPS` são constantes; virar configuração
-   por organização/mercado no módulo financeiro.
+2. As taxas da plataforma serão acordadas com cada organizador e aprovadas
+   pela administração. Até existir esse acordo, não se cobra taxa por evento
+   nem comissão por bilhete; nenhuma taxa de serviço é acrescentada ao preço
+   pago pelo comprador.
 3. `nextOrderNumber` usa `count()` — em alta concorrência trocar por
    sequência dedicada do PostgreSQL.
 4. Webhooks de pagamento e `confirmHold` na confirmação — Parte 14.

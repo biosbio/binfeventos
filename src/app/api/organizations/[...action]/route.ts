@@ -37,7 +37,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
     }
 
     if (path === "members/invite") {
-      const auth = await requirePermission("org:invite");
+      const auth = await requirePermission("org:role:assign");
       const body = parseBody((await import("@/modules/organizations/schemas")).inviteMemberSchema, await req.json());
       const { inviteMember } = await import("@/modules/organizations/service");
       const result = await inviteMember(auth, body);
@@ -57,6 +57,45 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       const body = parseBody((await import("@/modules/organizations/schemas")).assignRoleSchema, await req.json());
       const { assignRole } = await import("@/modules/organizations/service");
       await assignRole(auth, body.memberId, body.roleName);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (path === "seller-invites/create") {
+      const auth = await requirePermission("org:invite");
+      const { createBoxOfficeSellerInvite } = await import("@/modules/organizations/service");
+      const invite = await createBoxOfficeSellerInvite(auth);
+      return NextResponse.json({ ok: true, invite }, { status: 201 });
+    }
+
+    if (path === "seller-invites/claim") {
+      const auth = await requireAuth();
+      const body = parseBody((await import("@/modules/organizations/schemas")).sellerInviteClaimSchema, await req.json());
+      const { requestBoxOfficeSellerAccess } = await import("@/modules/organizations/service");
+      const status = await requestBoxOfficeSellerAccess(auth, body.token);
+      return NextResponse.json({ ok: true, status });
+    }
+
+    if (path === "seller-invites/approve") {
+      const auth = await requirePermission("org:invite");
+      const body = parseBody((await import("@/modules/organizations/schemas")).sellerMembershipSchema, await req.json());
+      const { approveBoxOfficeSeller } = await import("@/modules/organizations/service");
+      await approveBoxOfficeSeller(auth, body.memberId);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (path === "seller-invites/revoke-seller") {
+      const auth = await requirePermission("org:invite");
+      const body = parseBody((await import("@/modules/organizations/schemas")).sellerMembershipSchema, await req.json());
+      const { revokeBoxOfficeSeller } = await import("@/modules/organizations/service");
+      await revokeBoxOfficeSeller(auth, body.memberId);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (path === "seller-invites/revoke") {
+      const auth = await requirePermission("org:invite");
+      const body = parseBody((await import("@/modules/organizations/schemas")).sellerInviteIdSchema, await req.json());
+      const { revokeBoxOfficeSellerInvite } = await import("@/modules/organizations/service");
+      await revokeBoxOfficeSellerInvite(auth, body.inviteId);
       return NextResponse.json({ ok: true });
     }
 

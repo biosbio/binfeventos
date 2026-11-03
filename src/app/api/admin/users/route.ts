@@ -16,6 +16,65 @@ const updateSchema = z.object({
   { message: "Indique pelo menos um campo para atualizar." },
 );
 
+const sellerMembershipActionSchema = z.object({
+  membershipId: z.string().uuid(),
+  action: z.enum(["approve", "revoke"]),
+});
+
+export async function POST(req: NextRequest) {
+  try {
+    const actor = await requirePanelAuth();
+    if (actor.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError();
+    const parsed = sellerMembershipActionSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      throw new ValidationError(parsed.error.issues.map((issue) => issue.message).join("; "));
+    }
+
+    const membership = await prisma.orgMembership.findFirst({
+      where: {
+        id: parsed.data.membershipId,
+        role: { name: "BOX_OFFICE_OPERATOR", isSystem: true },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        acceptedAt: true,
+        user: { select: { id: true, status: true } },
+      },
+    });
+    if (!membership) throw new NotFoundError("Associação de vendedor");
+
+    if (parsed.data.action === "approve") {
+      if (membership.acceptedAt) {
+        throw new AppError("ALREADY_APPROVED", 409, "Este vendedor já está autorizado.");
+      }
+      if (membership.user.status !== "ACTIVE") {
+        throw new AppError("USER_NOT_ACTIVE", 422, "Não é possível autorizar uma conta suspensa ou encerrada.");
+      }
+      await prisma.orgMembership.update({
+        where: { id: membership.id },
+        data: { acceptedAt: new Date() },
+      });
+    } else {
+      await prisma.orgMembership.delete({ where: { id: membership.id } });
+    }
+
+    await writeAudit({
+      organizationId: membership.organizationId,
+      actorUserId: actor.userId,
+      action: parsed.data.action === "approve"
+        ? "admin.boxoffice_seller_approved"
+        : "admin.boxoffice_seller_revoked",
+      after: { membershipId: membership.id, userId: membership.user.id },
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const { status, body } = errorResponse(error);
+    return NextResponse.json(body, { status });
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   try {
     const actor = await requirePanelAuth();

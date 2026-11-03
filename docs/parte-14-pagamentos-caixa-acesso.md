@@ -8,6 +8,30 @@ Interface `PaymentAdapter` normaliza: iniciação, reembolso, verificação de
 webhook e consulta de estado. **Substituir prestador não exige reemissão de
 bilhetes nem perde histórico.** Chaves do prestador vivem em `adapterConfig`
 (resolvidas via gestor de segredos) — nunca hardcoded, nunca no cliente.
+Cada adaptador declara métodos/moedas suportados e se a configuração está
+completa. O checkout só apresenta provedores ativos, configurados e
+compatíveis com a moeda; o servidor repete a validação antes de iniciar.
+`GET /api/payments/options?currency=XXX` devolve apenas nomes e métodos,
+nunca credenciais.
+
+Para a Guiné-Bissau, PayPal, cartões, Orange Money, Teletaku e transferência
+IBAN ainda não ficam ativos até existir conta comercial/API ou dados e processo
+de reconciliação. Pix fica adiado. Dinheiro permanece exclusivo da bilheteira
+física. A integração de cada carteira depende das especificações e credenciais
+oficiais do provedor.
+
+A página `/bilheteira` dá aos vendedores autorizados a abertura do turno e o
+registo da venda em dinheiro. A venda confirma o pagamento pelo fluxo central e
+emite os bilhetes; o comprador online nunca recebe dinheiro como opção.
+
+O organizador gere os vendedores em `/painel/vendedores`: gera um link de
+inscrição válido por 30 dias, que pode revogar. A pessoa cria ou usa a sua conta
+e envia um pedido de acesso; o link não concede permissões de venda. Só depois
+de o organizador aprovar o pedido é atribuída a função `BOX_OFFICE_OPERATOR`,
+que permite entrar na bilheteira após iniciar sessão novamente. Os pedidos e os
+vendedores autorizados aparecem na lista da organização. Na gestão central de
+utilizadores, a administração também pode aprovar/rejeitar pedidos, remover
+acessos, editar dados e suspender contas; cada ação é auditada.
 
 ### Opção B — tentativas controladas
 
@@ -69,6 +93,7 @@ webhook CONFIRMED
 | Método | Rota | Guard |
 |---|---|---|
 | POST | `/api/payments/initiate` | comprador ou `boxoffice:sell` |
+| GET | `/api/payments/options?currency=XXX` | comprador autenticado |
 | POST | `/api/payments/webhook/{code}` | público (assinatura validada) |
 | POST | `/api/payments/review` | `payment:review` |
 | GET | `/api/payments/pending` | `payment:review` |

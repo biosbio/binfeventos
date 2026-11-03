@@ -16,7 +16,7 @@ export default async function NewEventPage() {
   const organization = ctx.organizationId
     ? await prisma.organization.findUnique({
         where: { id: ctx.organizationId },
-        select: { country: true },
+          select: { country: true, currency: true },
       })
     : null;
 
@@ -24,6 +24,7 @@ export default async function NewEventPage() {
     <NewEventForm
       needsOrganization={!ctx.organizationId}
       initialCountry={organization?.country ?? "GW"}
+      initialCurrency={organization?.currency ?? "XOF"}
       countryOptions={getCountryOptions()}
       currencyOptions={getCurrencyOptions()}
     />

@@ -91,6 +91,18 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
   });
   if (!shift) throw new BusinessRuleError("Abra um turno antes de vender.");
 
+  const hold = await prisma.inventoryHold.findUnique({
+    where: { id: input.holdId },
+    select: { organizationId: true, userId: true },
+  });
+  if (
+    !hold ||
+    hold.organizationId !== ctx.organizationId ||
+    hold.userId !== ctx.userId
+  ) {
+    throw new ForbiddenError("boxoffice-hold-not-owned");
+  }
+
   // Reutiliza o motor de vendas (mesmas regras, cálculo server-side)
   const { createOrder } = await import("@/modules/sales/service");
   const checkoutInput: CreateOrderInput = {

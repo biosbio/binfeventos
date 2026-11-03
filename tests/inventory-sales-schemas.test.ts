@@ -101,17 +101,30 @@ describe("updateTicketTypeQuantitySchema", () => {
 describe("createOrderSchema (checkout)", () => {
   const base = {
     holdId: "b3f1c0a0-0000-4000-8000-000000000010",
-    buyerName: "Comprador X",
-    buyerEmail: "comprador@example.com",
   };
 
   it("exige pelo menos um titular identificado", () => {
     expect(createOrderSchema.safeParse({ ...base, attendees: [] }).success).toBe(false);
   });
 
+  it("não exige dados do comprador enviados pelo cliente", () => {
+    const r = createOrderSchema.safeParse({
+      ...base,
+      attendees: [
+        {
+          ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
+          fullName: "Titular Y",
+        },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
   it("não contém NENHUM campo monetário", () => {
     const r = createOrderSchema.safeParse({
       ...base,
+      buyerName: "Comprador X",
+      buyerEmail: "comprador@example.com",
       attendees: [
         {
           ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
@@ -132,6 +145,7 @@ describe("createOrderSchema (checkout)", () => {
   it("normaliza email do comprador", () => {
     const r = createOrderSchema.parse({
       ...base,
+      buyerName: "Comprador X",
       buyerEmail: "COMPRA@DOR.com",
       attendees: [
         {

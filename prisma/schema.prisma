@@ -43,6 +43,7 @@ model Organization {
   createdAt  DateTime  @default(now())
 
   memberships OrgMembership[]
+  boxOfficeSellerInvites BoxOfficeSellerInvite[]
   sessions    Session[]
   auditLogs   AuditLog[]
   events      Event[]
@@ -84,6 +85,7 @@ model User {
   createdAt    DateTime   @default(now())
 
   memberships OrgMembership[]
+  createdBoxOfficeSellerInvites BoxOfficeSellerInvite[] @relation("BoxOfficeSellerInviteCreator")
   sessions    Session[]
   panelVerificationCodes PanelVerificationCode[]
   passwordResetCodes PasswordResetCode[]
@@ -144,6 +146,22 @@ model OrgMembership {
 
   @@unique([organizationId, userId])
   @@map("org_memberships")
+}
+
+model BoxOfficeSellerInvite {
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @db.Uuid
+  createdByUserId String    @db.Uuid
+  tokenHash       String    @unique
+  createdAt       DateTime  @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  createdBy    User         @relation("BoxOfficeSellerInviteCreator", fields: [createdByUserId], references: [id])
+
+  @@index([organizationId, expiresAt])
+  @@map("box_office_seller_invites")
 }
 
 model Session {

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import type {
   PaymentAdapter,
+  PaymentMethodType,
   InitiatePaymentInput,
   InitiatePaymentResult,
   RefundInput,
@@ -47,6 +48,18 @@ interface EmisFrameResponse {
 export class MulticaixaExpressAdapter implements PaymentAdapter {
   readonly code = "multicaixa-express";
   readonly country = "AO";
+  readonly supportedMethods: readonly PaymentMethodType[] = ["MOBILE_MONEY"];
+  readonly supportedCurrencies = ["AOA"];
+
+  isConfigured(adapterConfig: Record<string, unknown>): boolean {
+    const config = adapterConfig as MulticaixaConfig;
+    return Boolean(
+      config.baseUrl &&
+      config.merchantToken &&
+      config.posId &&
+      config.webhookSecret
+    );
+  }
 
   async initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     const config = (input.adapterConfig ?? {}) as MulticaixaConfig;
