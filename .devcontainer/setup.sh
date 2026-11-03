@@ -6,7 +6,26 @@ cd /workspaces/binfeventos
 # Keep existing local credentials and settings; create secure development values only once.
 if [ ! -f .env ]; then
   ADMIN_PASSWORD="BinfDev-$(openssl rand -hex 18)"
-  ADMIN_MFA_SECRET="$(openssl rand -hex 32)"
+  # TOTP secrets must be RFC 4648 Base32 (not hexadecimal).
+  ADMIN_MFA_SECRET="$(node <<'NODE'
+const { randomBytes } = require("node:crypto");
+const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const bytes = randomBytes(20);
+let bits = 0;
+let value = 0;
+let output = "";
+for (const byte of bytes) {
+  value = (value << 8) | byte;
+  bits += 8;
+  while (bits >= 5) {
+    output += alphabet[(value >>> (bits - 5)) & 31];
+    bits -= 5;
+  }
+}
+if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+process.stdout.write(output);
+NODE
+)"
   MFA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
   SESSION_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
   SANDBOX_WEBHOOK_SECRET="$(openssl rand -hex 32)"
