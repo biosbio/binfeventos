@@ -62,13 +62,13 @@ gerada no servidor. Chaves de prestadores (EMIS/Multicaixa) vivem em
 ## Como executar localmente
 
 ```bash
-npm install
-cp .env.example .env      # preencher DATABASE_URL
+npm ci                   # instalação reproduzível a partir do package-lock.json
+cp .env.example .env      # preencher DATABASE_URL e gerar os segredos
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:migrate   # desenvolvimento; cria/aplica migrations pendentes
 npm run db:seed
 npm run dev
-npm run test             # testes de caracterização (vitest)
+npm run test             # testes unitários/de caracterização (Vitest)
 
 # E2E (Playwright) — requer seed aplicado
 npx playwright install chromium
@@ -82,6 +82,7 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/` | Catálogo público de eventos publicados | Server |
 | `/eventos/{slug}` | Detalhe: sessões, tipos de bilhete, regras | Server |
 | `/login` | Login com MFA (campo dinâmico) | Client |
+| `/forgot-password` | Recuperação de palavra-passe por email/SMS ou TOTP do administrador | Client |
 | `/register` | Registo (validação forte no servidor) | Client |
 | `/minha-conta` | Encomendas e bilhetes do comprador | Server |
 | `/bilhetes/{id}` | Bilhete com QR SVG rotativo | Server |
@@ -112,6 +113,8 @@ npm run test:e2e          # arranca o dev server automaticamente
 | POST | `/api/users/mfa/confirm` | Confirmar MFA | autenticado |
 | POST | `/api/users/mfa/disable` | Desativar MFA (exige código) | autenticado |
 | POST | `/api/users/password` | Alterar password (revoga sessões) | autenticado |
+| POST | `/api/users/password-recovery-start` | Iniciar recuperação por email/SMS (resposta não revela se a conta existe) | público + rate limit |
+| POST | `/api/users/password-recovery-confirm` | Confirmar código e definir nova password; administrador usa TOTP | público + rate limit |
 | POST | `/api/users/panel-auth-start` | Enviar código de acesso de 6 dígitos por email/SMS | organizador autenticado |
 | POST | `/api/users/panel-auth-verify` | Validar OTP do organizador ou password + TOTP do administrador | autenticado |
 | POST | `/api/organizations/create` | Criar organização | autenticado |
@@ -159,6 +162,80 @@ npm run test:e2e          # arranca o dev server automaticamente
 | POST | `/api/finance/reserves/release` | Libertar reserva | `reserve:manage` |
 | POST | `/api/finance/ledger/adjust` | Lançamento compensatório | `ledger:adjust` |
 | GET | `/api/finance/ledger` | Consultar livro-razão | `ledger:read` |
+
+## Segurança e autenticação
+
+- **Passwords:** hash com Argon2id; a aplicação não armazena passwords em texto simples.
+- **Sessões:** tokens opacos; apenas o hash do token é persistido. A sessão é transportada em cookie HttpOnly e pode ser revogada.
+- **MFA TOTP:** ativação, confirmação e desativação autenticadas. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
+- **Acesso reforçado ao painel:** administradores confirmam password + TOTP; organizadores confirmam código de utilização única por email/SMS.
+- **Recuperação de password:** utilizadores/organizadores elegíveis podem receber código por email ou SMS; o administrador recupera através do TOTP. Os códigos têm validade limitada, limite de tentativas e rate limiting. A resposta inicial não revela se uma conta está registada. A recuperação termina as sessões anteriores.
+- **Rate limiting:** limites persistentes no PostgreSQL, partilhados entre instâncias.
+- **Autorização:** permissões por organização (RBAC/ABAC), validação no servidor e segregação de funções em operações financeiras.
+- **Auditoria:** operações sensíveis são registadas; o livro-razão é corrigido por lançamentos compensatórios, não por edição de lançamentos confirmados.
+
+### Variáveis de ambiente
+
+Consulte [.env.example](.env.example) como inventário dos nomes e formatos esperados. Nunca copie valores reais para o repositório.
+
+| Variável | Finalidade |
+|---|---|
+| `DATABASE_URL` | Ligação PostgreSQL |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Conta administrativa inicial do seed; use uma password forte e exclusiva |
+| `ADMIN_MFA_SECRET` | Segredo TOTP Base32 para configuração inicial/administração conforme o seed |
+| `SESSION_SECRET` | Segredo da aplicação para hashing/derivação e proteção de operações sensíveis |
+| `MFA_ENCRYPTION_KEY` | Chave hexadecimal de 64 caracteres (32 bytes) para AES-256-GCM |
+| `SANDBOX_WEBHOOK_SECRET` | Segredo HMAC do adaptador sandbox |
+| `PAYMENT_PROVIDER_CODE` | Prestador selecionado, por exemplo `sandbox` |
+| `APP_URL`, `NEXT_PUBLIC_APP_URL` | URLs da aplicação |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_API_KEY` | Configuração de envio de email, conforme o adaptador/provedor usado |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `SMS_API_KEY` | Configuração de SMS, conforme o adaptador/provedor usado |
+
+Gere os segredos no ambiente de destino com um gestor de segredos ou gerador criptograficamente seguro. Não reutilize os exemplos deste README ou de `.env.example`. A chave `MFA_ENCRYPTION_KEY` deve permanecer estável enquanto existirem segredos TOTP cifrados com ela; planeie qualquer rotação com migração controlada. Não exponha `.env`, códigos TOTP, códigos de recuperação, tokens, chaves ou payloads de webhook em logs, commits ou pedidos de suporte.
+
+## Base de dados e migrations
+
+As migrations Prisma versionadas na branch incluem:
+
+- `20261101110000_add_inventory_hold_owner` — metadados de titularidade das reservas de inventário.
+- `20261101111000_add_rate_limit_buckets` — armazenamento persistente de contadores de rate limit.
+- `20261101112000_unique_ledger_compensation` — unicidade das referências de lançamentos compensatórios.
+- `20261101113000_ticket_holder_identity` — identidade do titular do bilhete.
+- `20261101190000_password_reset_codes` — códigos de recuperação de palavra-passe.
+
+Em produção, aplique migrations versionadas com `npx prisma migrate deploy` depois de backup e validação do estado/dados existentes. Antes de aplicar a migration de unicidade do livro-razão, confirme que não existem referências compensatórias duplicadas. Antes do backfill de titularidade, verifique se existem emails que colidem após normalização para minúsculas. Faça primeiro um ensaio em staging com cópia representativa da base de dados; não use `prisma migrate dev` em produção.
+
+## Qualidade e integração contínua
+
+O workflow [CI](.github/workflows/main.yml) é executado em push e pull request para `develop` e `main`. O pipeline configura PostgreSQL 16 e Node.js 22.12.0, instala dependências com npm 11 (`npm ci`) e executa:
+
+1. `npm audit --audit-level=moderate`
+2. `prisma generate` e `prisma validate`
+3. `prisma migrate deploy` e `db:seed`
+4. `typecheck`, testes Vitest e lint
+5. Instalação do Chromium, build de produção e testes E2E Playwright
+
+Comandos úteis:
+
+```bash
+npm run typecheck
+npm run test
+npm run lint
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
+
+A existência do workflow no repositório não significa que uma execução tenha passado. Consulte a aba **Actions** e os checks do pull request para confirmar o resultado do commit que pretende integrar.
+
+## Notas operacionais e limites conhecidos
+
+- O adaptador sandbox é destinado a desenvolvimento/testes; não representa liquidação real.
+- A taxa de prestador de 1,5% usada no cálculo de liquidação está identificada no código como provisória e deve ser validada/substituída pela taxa contratual efetiva antes de utilização financeira em produção.
+- A confirmação de pagamento e a emissão de bilhetes são idempotentes; se a emissão falhar depois da confirmação, uma nova execução do processamento pode tentar concluir a emissão sem criar bilhetes duplicados.
+- O fluxo de pagamentos desconhecidos mantém a reserva protegida para revisão, em vez de libertar inventário cuja cobrança possa ter sido concluída.
+- A documentação descreve o código desta branch; confirme migrations, variáveis, integrações e estado do CI no ambiente real antes de uma publicação.
+
 
 ## Princípios estruturais
 
