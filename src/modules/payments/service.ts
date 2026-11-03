@@ -430,7 +430,16 @@ export async function confirmPayment(
     });
     return;
   }
-  if (payment.status === "CONFIRMED") return;
+  // A confirmação financeira pode ter sido persistida antes de uma falha
+  // transitória na emissão dos bilhetes. Repetir a emissão é seguro:
+  // issueTicketsForOrder serializa por encomenda e não duplica bilhetes.
+  if (payment.status === "CONFIRMED") {
+    if (payment.order.status === "CONFIRMED") {
+      const { issueTicketsForOrder } = await import("@/modules/access/service");
+      await issueTicketsForOrder(payment.orderId);
+    }
+    return;
+  }
 
   const didConfirm = await prisma.$transaction(async (tx) => {
     // Ordem de locks consistente: encomenda → pagamento → reserva.
