@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requirePanelAuth } from "@/shared/auth";
+import { getAuthContext } from "@/shared/auth";
 import { prisma } from "@/shared/lib/prisma";
 import AdminUsersTable, { type AdminUserRow } from "./users-table";
 
@@ -13,8 +13,12 @@ export default async function AdminUsersPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const auth = await requirePanelAuth();
+  const auth = await getAuthContext();
+  if (!auth) redirect("/login?next=%2Fadmin%2Fusers");
   if (auth.platformRole !== "PLATFORM_ADMIN") redirect("/painel");
+  if (!auth.panelVerifiedUntil || auth.panelVerifiedUntil.getTime() <= Date.now()) {
+    redirect("/acesso-painel?next=%2Fadmin%2Fusers");
+  }
 
   const params = await searchParams;
   const query = params.q?.trim().slice(0, 120) ?? "";

@@ -70,6 +70,7 @@ describe("login MFA policy", () => {
 
     await expect(loginUser({ email: "customer@example.com", password: "pass" })).resolves.toEqual({
       mfaRequired: false,
+      isAdmin: false,
     });
 
     expect(mocks.verifyTotp).not.toHaveBeenCalled();
@@ -104,8 +105,9 @@ describe("login MFA policy", () => {
       mfaSecret: "encrypted-secret",
     });
 
-    await loginUser({ email: "admin@example.com", password: "pass", totpCode: "123456" });
+    const result = await loginUser({ email: "admin@example.com", password: "pass", totpCode: "123456" });
 
+    expect(result).toEqual({ mfaRequired: false, isAdmin: true });
     expect(mocks.verifyTotp).toHaveBeenCalledWith({ token: "123456", secret: "authenticator-secret" });
     expect(mocks.createSession).toHaveBeenCalledWith("admin-1", null, true);
   });

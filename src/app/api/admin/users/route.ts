@@ -10,6 +10,7 @@ const updateSchema = z.object({
   fullName: z.string().trim().min(3).max(120).optional(),
   phone: z.string().trim().max(20).nullable().optional(),
   status: z.enum(["ACTIVE", "SUSPENDED", "CLOSED"]).optional(),
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
 }).refine((value) =>
   value.fullName !== undefined || value.phone !== undefined || value.status !== undefined,
   { message: "Indique pelo menos um campo para atualizar." },
@@ -36,9 +37,16 @@ export async function PATCH(req: NextRequest) {
     });
     if (!existing) throw new NotFoundError("Utilizador");
 
-    // Contas com privilégios de plataforma são protegidas contra alterações por este módulo.
+    // Administradores podem corrigir os próprios dados, mas o estado da conta fica protegido.
+    if (existing.platformRole === "PLATFORM_ADMIN" && input.status !== undefined) {
+      throw new AppError("PROTECTED_PLATFORM_ADMIN", 403, "O estado das contas de administrador da plataforma não pode ser alterado neste módulo.");
+    }
     if (existing.platformRole === "PLATFORM_ADMIN") {
-      throw new AppError("PROTECTED_PLATFORM_ADMIN", 403, "Contas de administrador da plataforma não podem ser alteradas neste módulo.");
+      if (!input.totpCode) {
+        throw new ValidationError("Código MFA obrigatório para editar a conta de administrador.");
+      }
+      const { verifyAdminActionMfa } = await import("@/modules/users/panel-auth");
+      await verifyAdminActionMfa(actor, input.totpCode);
     }
 
     const data = {

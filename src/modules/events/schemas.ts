@@ -59,6 +59,14 @@ export const sessionSchema = z.object({
   path: ["endsAt"],
 });
 
+export const createPlatformEventSchema = createEventSchema.extend({
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date(),
+}).refine((v) => v.endsAt > v.startsAt, {
+  message: "endsAt deve ser posterior a startsAt.",
+  path: ["endsAt"],
+});
+
 export const venueSchema = z.object({
   name: z.string().trim().min(2, "Nome do recinto obrigatório.").max(150),
   address: z.string().trim().max(300).optional(),

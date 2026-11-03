@@ -25,7 +25,7 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
   const [success, setSuccess] = useState("");
   const [pending, startTransition] = useTransition();
 
-  async function updateUser(payload: { userId: string; fullName?: string; phone?: string | null; status?: AdminUserRow["status"] }) {
+  async function updateUser(payload: { userId: string; fullName?: string; phone?: string | null; status?: AdminUserRow["status"]; totpCode?: string }) {
     setError("");
     setSuccess("");
     const response = await fetch("/api/admin/users", {
@@ -35,6 +35,10 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (result.code === "PANEL_STEP_UP_REQUIRED") {
+        window.location.href = "/acesso-painel?next=%2Fadmin%2Fusers";
+        return;
+      }
       setError(result.message ?? "Não foi possível atualizar o utilizador.");
       return;
     }
@@ -52,7 +56,7 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {success ? <p className="form-success" role="status">{success}</p> : null}
       {users.map((user) => {
-        const protectedAccount = user.platformRole === "PLATFORM_ADMIN";
+        const isPlatformAdmin = user.platformRole === "PLATFORM_ADMIN";
         const editing = editingId === user.id;
         return (
           <article className="panel admin-user-card" key={user.id}>
@@ -64,7 +68,7 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
               </div>
               <div className="admin-user-badges">
                 <span className={`status-pill status-${user.status.toLowerCase()}`}>{user.status}</span>
-                {protectedAccount ? <span className="status-pill">Administrador da plataforma</span> : null}
+                {isPlatformAdmin ? <span className="status-pill">Administrador da plataforma</span> : null}
               </div>
             </div>
 
@@ -85,6 +89,7 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
                   userId: user.id,
                   fullName: String(form.get("fullName") ?? ""),
                   phone: String(form.get("phone") ?? "").trim() || null,
+                  ...(isPlatformAdmin ? { totpCode: String(form.get("totpCode") ?? "").replace(/\D/g, "") } : {}),
                 });
               }}>
                 <label className="form-field">
@@ -95,6 +100,15 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
                   <span>Telefone</span>
                   <input name="phone" defaultValue={user.phone ?? ""} maxLength={20} />
                 </label>
+                {isPlatformAdmin ? (
+                  <>
+                    <label className="form-field">
+                      <span>Código MFA para confirmar a edição</span>
+                      <input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required />
+                    </label>
+                    <p className="form-help">Necessário apenas para editar a conta de administrador. O estado da conta permanece protegido.</p>
+                  </>
+                ) : null}
                 <div className="admin-user-actions">
                   <button className="button button-primary" type="submit" disabled={pending}>Guardar alterações</button>
                   <button className="button button-secondary" type="button" onClick={() => setEditingId(null)}>Cancelar</button>
@@ -102,14 +116,14 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
               </form>
             ) : (
               <div className="admin-user-actions">
-                <button className="button button-secondary" type="button" disabled={protectedAccount || pending} onClick={() => { setError(""); setSuccess(""); setEditingId(user.id); }}>Editar dados</button>
+                <button className="button button-secondary" type="button" disabled={pending} onClick={() => { setError(""); setSuccess(""); setEditingId(user.id); }}>Editar dados</button>
                 <button
                   className={user.status === "ACTIVE" ? "button button-secondary" : "button button-primary"}
                   type="button"
-                  disabled={protectedAccount || pending}
+                  disabled={isPlatformAdmin || pending}
                   onClick={() => void updateUser({ userId: user.id, status: user.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE" })}
                 >
-                  {user.status === "ACTIVE" ? "Suspender conta" : "Reativar conta"}
+                  {isPlatformAdmin ? "Conta protegida" : user.status === "ACTIVE" ? "Suspender conta" : "Reativar conta"}
                 </button>
               </div>
             )}

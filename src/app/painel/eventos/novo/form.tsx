@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import BrandLogo from "../../../_components/brand-logo";
 
 function makeSlug(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -95,7 +96,7 @@ export default function NewEventForm({
 
   return (
     <>
-      <header className="site-header event-create-header"><Link className="brand" href="/"><span className="brand-mark">B</span><span>BINF EVENTOS</span></Link><Link className="button button-secondary" href="/painel">Voltar ao painel</Link></header>
+      <header className="site-header event-create-header"><Link className="brand" href="/"><BrandLogo /></Link><Link className="button button-secondary" href="/painel">Voltar ao painel</Link></header>
       <main className="event-create-page">
         <div className="event-create-container">
           <Link className="event-back-link" href="/painel">← Voltar ao painel</Link>

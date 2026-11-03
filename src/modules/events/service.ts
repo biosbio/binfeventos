@@ -43,7 +43,10 @@ async function scopedEvent(ctx: AuthContext, eventId: string) {
 /** Criar evento (começa sempre em DRAFT). */
 export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  return createEventForOrganization(ctx, ctx.organizationId, input);
+}
 
+async function uniqueEventSlug(organizationId: string, input: CreateEventInput): Promise<string> {
   const baseSlug = (input.slug || input.name)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -55,16 +58,25 @@ export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
     .replace(/-+$/g, "") || "evento";
   let slug = baseSlug;
   for (let suffix = 2; await prisma.event.findFirst({
-    where: { organizationId: ctx.organizationId, slug },
+    where: { organizationId, slug },
     select: { id: true },
   }); suffix += 1) {
     const suffixText = `-${suffix}`;
     slug = `${baseSlug.slice(0, 80 - suffixText.length).replace(/-+$/g, "")}${suffixText}`;
   }
+  return slug;
+}
+
+async function createEventForOrganization(
+  ctx: AuthContext,
+  organizationId: string,
+  input: CreateEventInput,
+) {
+  const slug = await uniqueEventSlug(organizationId, input);
 
   const event = await prisma.event.create({
     data: {
-      organizationId: ctx.organizationId,
+      organizationId,
       name: input.name,
       slug,
       description: input.description ?? null,
@@ -79,7 +91,58 @@ export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
   });
 
   await writeAudit({
-    organizationId: ctx.organizationId,
+    organizationId,
+    actorUserId: ctx.userId,
+    action: "event.created",
+    after: sanitizeForAudit({ ...input, slug }),
+  });
+
+  return event;
+}
+
+/** Criar evento e primeira sessão na organização central BINF EVENTOS. */
+export async function createPlatformEvent(
+  ctx: AuthContext,
+  input: CreateEventInput & { startsAt: Date; endsAt: Date },
+) {
+  if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("admin:platform");
+
+  const organization = await prisma.organization.findUnique({
+    where: { slug: "binf-eventos" },
+    select: { id: true },
+  });
+  if (!organization) throw new NotFoundError("Organização central");
+
+  const slug = await uniqueEventSlug(organization.id, input);
+
+  if (input.startsAt.getTime() < Date.now() - 3_600_000) {
+    throw new BusinessRuleError("A sessão não pode começar no passado.");
+  }
+
+  const event = await prisma.event.create({
+    data: {
+      organizationId: organization.id,
+      name: input.name,
+      slug,
+      description: input.description ?? null,
+      category: input.category,
+      coverImageUrl: input.coverImageUrl ?? null,
+      entryRules: input.entryRules ?? null,
+      terms: input.terms ?? null,
+      responsibleUserId: ctx.userId,
+      status: "DRAFT",
+      sessions: {
+        create: {
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+        },
+      },
+    },
+    select: { id: true, slug: true, status: true },
+  });
+
+  await writeAudit({
+    organizationId: organization.id,
     actorUserId: ctx.userId,
     action: "event.created",
     after: sanitizeForAudit({ ...input, slug }),

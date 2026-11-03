@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import BrandLogo from "../_components/brand-logo";
 
-export default function PanelAuthForm({ isAdmin }: { isAdmin: boolean }) {
+export default function PanelAuthForm({ isAdmin, nextPath }: { isAdmin: boolean; nextPath: string }) {
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,7 +20,7 @@ export default function PanelAuthForm({ isAdmin }: { isAdmin: boolean }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message ?? "Não foi possível validar.");
-      window.location.href = isAdmin ? "/admin" : "/painel";
+      window.location.href = nextPath;
     } catch (e) { setError(e instanceof Error ? e.message : "Erro de validação."); }
     finally { setBusy(false); }
   }
@@ -27,7 +28,7 @@ export default function PanelAuthForm({ isAdmin }: { isAdmin: boolean }) {
   return (
     <main className="auth-wrap">
       <section className="auth-card">
-        <span className="brand"><span className="brand-mark">B</span> BINF EVENTOS</span>
+        <span className="brand"><BrandLogo /></span>
         <h1>{isAdmin ? "Confirmar acesso administrativo" : "Validar acesso do organizador"}</h1>
         <p>{isAdmin
           ? "Por segurança, confirme novamente a sua password e o código da aplicação autenticadora."

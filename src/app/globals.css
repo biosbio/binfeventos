@@ -36,16 +36,21 @@ button, a { -webkit-tap-highlight-color: transparent; }
   background: rgba(246,247,244,.92);
   border-bottom: 1px solid rgba(227,232,227,.8);
 }
-.brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 900; letter-spacing: -.04em; font-size: 20px; }
+.brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 900; letter-spacing: -.04em; font-size: 20px; }
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--green); color: white; font-size: 16px; letter-spacing: -.08em; }
+.brand-logo-frame { display: inline-flex; overflow: hidden; align-items: center; justify-content: center; padding: 2px; border: 1px solid #e3e8e3; border-radius: 14px; background: #fff; box-shadow: 0 2px 8px rgba(21,48,37,.08); }
+.brand-logo-image { display: block; width: 108px; height: 61px; border-radius: 11px; object-fit: contain; }
+.brand-logo-word { color: var(--green-dark); font-size: 11px; font-weight: 900; letter-spacing: .12em; }
 .nav { display: flex; align-items: center; gap: 25px; color: #42504a; font-size: 14px; font-weight: 700; }
 .nav a:hover { color: var(--green); }
-.nav-actions { display: flex; align-items: center; gap: 10px; }
+.nav-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 18px; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font-weight: 800; transition: transform .18s ease, background .18s ease; }
 .button:hover { transform: translateY(-1px); }
 .button-primary { color: white; background: var(--green); }
 .button-primary:hover { background: var(--green-dark); }
 .button-secondary { color: var(--ink); background: transparent; border-color: var(--line); }
+.logout-button { min-height: 34px; margin-left: 4px; padding: 0 8px; border-color: transparent; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }
+.logout-button:hover { color: var(--green-dark); background: #e9eee8; }
 .button-lime { color: var(--ink); background: var(--lime); }
 
 .container { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
@@ -139,6 +144,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 @media (max-width: 600px) {
   .site-header { min-height: 66px; padding: 0 18px; }
+  .brand-logo-image { width: 92px; height: 52px; }
+  .brand-logo-word { font-size: 10px; }
   .nav { display: none; }
   .nav-actions .button-secondary { display: none; }
   .hero { padding: 58px 0 55px; }

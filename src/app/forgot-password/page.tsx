@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import BrandLogo from "../_components/brand-logo";
 import { useState } from "react";
 
 type Method = "EMAIL" | "SMS" | "TOTP";
@@ -62,7 +63,7 @@ export default function ForgotPasswordPage() {
   return (
     <div className="auth-wrap">
       <section className="auth-card">
-        <span className="brand"><span className="brand-mark">B</span> BINF EVENTOS</span>
+        <span className="brand"><BrandLogo /></span>
         <h1>Recuperar password</h1>
         <p>Confirme a sua identidade usando um contacto já associado à conta ou a aplicação autenticadora do administrador.</p>
         {error ? <div className="form-error" role="alert">{error}</div> : null}

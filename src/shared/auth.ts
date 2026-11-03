@@ -43,7 +43,7 @@ export async function createSession(
       organizationId,
       tokenHash: sha256(token),
       expiresAt,
-      panelVerifiedUntil: panelVerified ? new Date(Date.now() + 10 * 60 * 1000) : null,
+      panelVerifiedUntil: panelVerified ? expiresAt : null,
     },
   });
 

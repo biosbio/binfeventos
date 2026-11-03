@@ -93,6 +93,7 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/painel/eventos/novo` | Submeter evento para aprovação; inclui configuração da organização para novos organizadores | Server/Client |
 | `/painel/eventos/{id}` | Gerir evento, sessões e imagem de capa | Server/Client |
 | `/admin/events` | Rever e aprovar propostas de eventos | Server/Client |
+| `/admin/events/new` | Criar evento e sessão inicial na organização central BINF EVENTOS | Server/Client |
 | `/admin` | Painel central da plataforma, exclusivo do administrador | Server |
 | `/financas` | Liquidações + livro-razão (FINANCE_MANAGER) | Server |
 | `/financas/acoes` | Preparar/aprovar/pagar liquidações (dupla aprovação) | Client |
@@ -123,10 +124,11 @@ npm run test:e2e          # arranca o dev server automaticamente
 | POST | `/api/organizations/members/accept` | Aceitar convite | autenticado |
 | POST | `/api/organizations/members/role` | Mudar papel | `org:role:assign` |
 | POST | `/api/events/create` | Criar evento (começa DRAFT) | `event:create` |
+| POST | `/api/events/platform-create` | Criar evento e sessão inicial na organização central | `admin:platform` |
 | GET | `/api/events` | Listar eventos (`?status=`) | `event:read` |
 | GET | `/api/events/{id}` | Detalhe do evento | `event:read` |
 | PATCH | `/api/events/{id}` | Editar evento | `event:update` |
-| POST | `/api/events/upload-cover` | Carregar imagem JPEG, PNG ou WebP (máx. 5 MB; 20 carregamentos/hora) | `event:create` |
+| POST | `/api/events/upload-cover` | Carregar imagem JPEG, PNG ou WebP (máx. 5 MB; 20 carregamentos/hora) | `event:create` ou `admin:platform` |
 | POST | `/api/events/{id}/sessions` | Adicionar sessão | `session:manage` |
 | POST | `/api/events/{id}/transition` | Transição de estado; publicar proposta exige administrador da plataforma | aprovação administrativa / `event:publish` / `event:cancel` / `org:manage` |
 | POST | `/api/events/venues` | Criar recinto | `venue:manage` |
@@ -169,8 +171,8 @@ npm run test:e2e          # arranca o dev server automaticamente
 - **Passwords:** hash com Argon2id; a aplicação não armazena passwords em texto simples.
 - **Sessões:** tokens opacos; apenas o hash do token é persistido. A sessão é transportada em cookie HttpOnly e pode ser revogada.
 - **Logout:** clientes, organizadores e administradores podem terminar a sessão pelo botão no cabeçalho/painel; o token da sessão é revogado no servidor.
-- **MFA TOTP:** obrigatório no login de administradores da plataforma, com código de seis dígitos da aplicação autenticadora. A ativação é exclusiva de administradores e o MFA administrativo não pode ser desativado. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
-- **Acesso reforçado ao painel:** administradores confirmam password + TOTP; organizadores confirmam novamente a password. Novos organizadores criam o perfil da organização ao submeter a primeira proposta.
+- **MFA TOTP:** obrigatório no login de administradores da plataforma, com código de seis dígitos da aplicação autenticadora. Após MFA válido no login, a sessão administrativa fica verificada durante a validade da sessão (12 horas), sem pedir o mesmo código novamente ao abrir a administração. A ativação é exclusiva de administradores e o MFA administrativo não pode ser desativado. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
+- **Acesso reforçado ao painel:** administradores confirmam password + TOTP no login, e essa validação dura as 12 horas da sessão; organizadores confirmam novamente a password. Novos organizadores criam o perfil da organização ao submeter a primeira proposta.
 - **Propostas de evento:** qualquer utilizador autenticado pode criar um perfil de organizador e submeter eventos em rascunho. O painel lista os eventos criados pelo próprio utilizador; só a administração pode aprovar a publicação.
 - **País, moeda e capas:** a criação do perfil de organização disponibiliza países e moedas suportados pelo runtime. As capas são validadas e gravadas em `public/uploads/event-covers`; em produção, configure armazenamento persistente para esta pasta ou substitua-o por armazenamento de objetos.
 - **Recuperação de password:** iniciada a partir do login; utilizadores/organizadores elegíveis podem receber código por email ou SMS, e o administrador confirma com TOTP. Os códigos têm validade limitada, limite de tentativas e rate limiting. A resposta inicial não revela se uma conta está registada. A recuperação termina as sessões anteriores.

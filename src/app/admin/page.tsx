@@ -20,7 +20,7 @@ export default async function AdminDashboardPage() {
         <div className="panel"><div className="price-label">Eventos</div><div className="price">{events}</div></div>
         <div className="panel"><div className="price-label">Rascunhos</div><div className="price">{pendingEvents}</div></div>
       </div>
-      <div className="admin-dashboard-actions"><Link className="button button-primary" href="/admin/events">Rever propostas ({pendingEvents})</Link><Link className="button button-secondary" href="/admin/users">Gerir utilizadores</Link></div>
+      <div className="admin-dashboard-actions"><Link className="button button-primary" href="/admin/events/new">Criar evento</Link><Link className="button button-secondary" href="/admin/events">Rever propostas ({pendingEvents})</Link><Link className="button button-secondary" href="/admin/users">Gerir utilizadores</Link></div>
     </main>
   );
 }

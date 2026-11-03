@@ -18,8 +18,8 @@ export default function LogoutButton() {
   }
 
   return (
-    <button className="button button-secondary" type="button" onClick={logout} disabled={busy}>
-      {busy ? "A sair…" : "Terminar sessão"}
+    <button className="button logout-button" type="button" onClick={logout} disabled={busy}>
+      {busy ? "A sair…" : "Sair"}
     </button>
   );
 }

@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   verifyPassword: vi.fn(),
   markPanelVerified: vi.fn(),
+  decryptMfaSecret: vi.fn(),
+  verifyTotp: vi.fn(),
 }));
 
 vi.mock("@/shared/lib/prisma", () => ({
@@ -14,16 +16,20 @@ vi.mock("@/shared/lib/prisma", () => ({
 vi.mock("@/shared/lib/security", () => ({
   verifyPassword: mocks.verifyPassword,
   rateLimit: mocks.rateLimit,
-  decryptMfaSecret: vi.fn(),
+  decryptMfaSecret: mocks.decryptMfaSecret,
   encryptMfaSecret: vi.fn(),
   isEncryptedMfaSecret: vi.fn(),
+}));
+
+vi.mock("otplib", () => ({
+  authenticator: { verify: mocks.verifyTotp },
 }));
 
 vi.mock("@/shared/auth", () => ({
   markPanelVerified: mocks.markPanelVerified,
 }));
 
-import { verifyOrganizerPanelPassword } from "../src/modules/users/panel-auth";
+import { verifyAdminActionMfa, verifyOrganizerPanelPassword } from "../src/modules/users/panel-auth";
 import type { AuthContext } from "../src/shared/auth";
 
 const organizerContext: AuthContext = {
@@ -37,6 +43,16 @@ const organizerContext: AuthContext = {
   panelVerifiedUntil: null,
 };
 
+const adminContext: AuthContext = {
+  ...organizerContext,
+  userId: "admin-1",
+  email: "admin@example.com",
+  organizationId: null,
+  permissions: new Set(["admin:platform"]),
+  mfaEnabled: true,
+  platformRole: "PLATFORM_ADMIN",
+};
+
 describe("organizer panel password confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,6 +60,36 @@ describe("organizer panel password confirmation", () => {
     mocks.findUser.mockResolvedValue({ passwordHash: "hashed-password" });
     mocks.verifyPassword.mockResolvedValue(true);
     mocks.markPanelVerified.mockResolvedValue(undefined);
+  });
+
+  describe("admin MFA confirmation for protected account edits", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.rateLimit.mockResolvedValue(false);
+      mocks.findUser.mockResolvedValue({ mfaEnabled: true, mfaSecret: "encrypted-secret" });
+      mocks.decryptMfaSecret.mockReturnValue("base32-secret");
+      mocks.verifyTotp.mockReturnValue(true);
+      vi.stubEnv("MFA_ENCRYPTION_KEY", "a".repeat(64));
+    });
+
+    it("accepts a valid TOTP for an administrator", async () => {
+      await expect(verifyAdminActionMfa(adminContext, "123456")).resolves.toBeUndefined();
+      expect(mocks.verifyTotp).toHaveBeenCalledWith({ token: "123456", secret: "base32-secret" });
+    });
+
+    it("rejects a user who is not a platform administrator", async () => {
+      await expect(verifyAdminActionMfa(organizerContext, "123456")).rejects.toMatchObject({
+        code: "FORBIDDEN",
+      });
+      expect(mocks.findUser).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid TOTP", async () => {
+      mocks.verifyTotp.mockReturnValue(false);
+      await expect(verifyAdminActionMfa(adminContext, "123456")).rejects.toMatchObject({
+        code: "INVALID_MFA",
+      });
+    });
   });
 
   it("verifies the password and elevates only the current session", async () => {

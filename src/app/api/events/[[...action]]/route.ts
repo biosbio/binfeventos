@@ -54,7 +54,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
   try {
     if (path === "upload-cover") {
-      const auth = await requirePermission("event:create");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("event:create");
       if (await rateLimit(`event-cover-upload:${auth.userId}`, 20, 60 * 60 * 1000)) {
         throw new AppError("RATE_LIMITED", 429, "Limite de carregamentos de imagem atingido. Tente novamente mais tarde.");
       }
@@ -89,6 +92,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, event }, { status: 201 });
     }
 
+    if (path === "platform-create") {
+      const auth = await requirePermission("admin:platform");
+      const body = parse(
+        (await import("@/modules/events/schemas")).createPlatformEventSchema,
+        await req.json(),
+      );
+      const { createPlatformEvent } = await import("@/modules/events/service");
+      const event = await createPlatformEvent(auth, body);
+      return NextResponse.json({ ok: true, event }, { status: 201 });
+    }
+
     // POST /api/events/venues
     if (path === "venues") {
       const auth = await requirePermission("venue:manage");
@@ -100,7 +114,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
     // POST /api/events/{id}/sessions
     if (action.length === 2 && action[1] === "sessions") {
-      const auth = await requirePermission("session:manage");
+      const current = await requireAuth();
+      const auth = current.platformRole === "PLATFORM_ADMIN"
+        ? await requirePermission("admin:platform")
+        : await requirePermission("session:manage");
       const eventId = parse(UUID, action[0]);
       const raw = (await req.json()) as Record<string, unknown>;
       const body = parse((await import("@/modules/events/schemas")).sessionSchema, { ...raw, eventId });

@@ -107,3 +107,23 @@ export async function verifyAdminPanelMfa(
   }
   await markPanelVerified(ctx.sessionId);
 }
+
+export async function verifyAdminActionMfa(ctx: AuthContext, totpCode: string): Promise<void> {
+  if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("platform-admin-only");
+  if (!process.env.MFA_ENCRYPTION_KEY) {
+    throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
+  }
+  if (await rateLimit(`admin-user-edit-mfa:${ctx.userId}`, 5, 5 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde cinco minutos.");
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { mfaEnabled: true, mfaSecret: true },
+  });
+  if (!user?.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(totpCode)) {
+    throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+  if (!authenticator.verify({ token: totpCode, secret: decryptMfaSecret(user.mfaSecret) })) {
+    throw new AppError("INVALID_MFA", 401, "Código MFA inválido ou MFA não configurado.");
+  }
+}

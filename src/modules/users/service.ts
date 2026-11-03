@@ -45,7 +45,7 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
 }
 
 /** Autentica e cria a sessão (com MFA obrigatório para administradores). */
-export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean }> {
+export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean; isAdmin: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
   if (
     await rateLimit(`login:ip:${ip ?? "unknown"}`, 30, 15 * 60 * 1000) ||
@@ -103,7 +103,7 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     membership?.organizationId ?? null,
     user.platformRole === "PLATFORM_ADMIN",
   );
-  return { mfaRequired: false };
+  return { mfaRequired: false, isAdmin: user.platformRole === "PLATFORM_ADMIN" };
 }
 
 /** Inicia ativação de MFA: gera segredo + URL otpauth (QR a ler na app). */

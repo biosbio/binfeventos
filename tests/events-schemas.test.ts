@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createEventSchema,
+  createPlatformEventSchema,
   sessionSchema,
   venueSchema,
   eventSlugSchema,
@@ -54,6 +55,22 @@ describe("sessionSchema", () => {
         endsAt: "2026-12-31T19:00:00Z",
       }).success
     ).toBe(false);
+  });
+
+  describe("createPlatformEventSchema", () => {
+    const session = {
+      startsAt: "2027-01-02T18:00:00.000Z",
+      endsAt: "2027-01-02T21:00:00.000Z",
+    };
+
+    it("requires a valid initial session", () => {
+      expect(createPlatformEventSchema.safeParse({ name: "Evento central", ...session }).success).toBe(true);
+      expect(createPlatformEventSchema.safeParse({
+        name: "Evento central",
+        startsAt: session.endsAt,
+        endsAt: session.startsAt,
+      }).success).toBe(false);
+    });
   });
 
   it("aceita sessão válida e converte datas", () => {

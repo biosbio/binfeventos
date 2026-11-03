@@ -32,6 +32,7 @@ export default async function EventProposalsPage() {
           <p>Os eventos em análise não aparecem ao público. Só ficam visíveis depois da aprovação.</p>
         </div>
         <div className="dashboard-heading-actions">
+          <Link className="button button-primary" href="/admin/events/new">Criar evento</Link>
           <Link className="button button-secondary" href="/admin">Voltar ao painel</Link>
           <LogoutButton />
         </div>
