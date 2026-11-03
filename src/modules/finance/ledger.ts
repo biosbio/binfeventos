@@ -169,6 +169,12 @@ export async function decideSettlement(
       data: { status: "CANCELLED", approvedByUserId: ctx.userId },
     });
     if (changed.count !== 1) throw new ConflictError("Liquidação já foi processada.");
+    await writeAudit({
+      organizationId,
+      actorUserId: ctx.userId,
+      action: "settlement.rejected",
+      after: sanitizeForAudit({ settlementId: settlement.id }),
+    });
     return { approved: false };
   }
 
