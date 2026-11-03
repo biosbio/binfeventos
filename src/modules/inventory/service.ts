@@ -278,7 +278,9 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
   const hold = await prisma.$transaction(async (tx) => {
     // Serializa reservas simultâneas do mesmo comprador na mesma sessão,
     // inclusive quando tentam lotes diferentes ao mesmo tempo.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${ctx.userId}), hashtext(${input.sessionId}))`;
+    await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_advisory_xact_lock(hashtext(${ctx.userId}), hashtext(${input.sessionId})) IS NULL AS locked
+    `;
 
     // BLOQUEIO PESSIMISTA na linha de inventário (SEC: exclusividade de venda)
     const [inv] = await tx.$queryRaw<
@@ -286,9 +288,9 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     >`
       SELECT id, ("totalQuantity" - "reservedQuantity" - "soldQuantity") AS available
       FROM "ticket_inventory"
-      WHERE "sessionId" = ${input.sessionId}
-        AND "ticketTypeId" = ${input.ticketTypeId}
-        AND "batchId" = ${input.batchId}
+      WHERE "sessionId" = ${input.sessionId}::uuid
+        AND "ticketTypeId" = ${input.ticketTypeId}::uuid
+        AND "batchId" = ${input.batchId}::uuid
       FOR UPDATE
     `;
     if (!inv) throw new NotFoundError("Inventário do lote nesta sessão");

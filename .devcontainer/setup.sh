@@ -47,6 +47,8 @@ fi
 sed -i 's/@localhost:5432\//@db:5432\//g' .env
 
 npm install
+sudo npx playwright install-deps chromium
+npx playwright install chromium
 npx prisma generate
 npx prisma migrate deploy
 set -a
