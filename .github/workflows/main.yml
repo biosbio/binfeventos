@@ -36,7 +36,26 @@ jobs:
           set -euo pipefail
           SANDBOX_WEBHOOK_SECRET="$(openssl rand -hex 32)"
           ADMIN_PASSWORD="Ci$(openssl rand -hex 20)A1!"
-          ADMIN_MFA_SECRET="$(openssl rand -hex 32 | tr '0123456789abcdef' 'ABCDEFGHIJKLMNOP')"
+          # Generate a real RFC 4648 Base32 secret for TOTP.
+          ADMIN_MFA_SECRET="$(node <<'NODE'
+          const { randomBytes } = require("node:crypto");
+          const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+          const bytes = randomBytes(20);
+          let bits = 0;
+          let value = 0;
+          let output = "";
+          for (const byte of bytes) {
+            value = (value << 8) | byte;
+            bits += 8;
+            while (bits >= 5) {
+              output += alphabet[(value >>> (bits - 5)) & 31];
+              bits -= 5;
+            }
+          }
+          if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+          process.stdout.write(output);
+          NODE
+          )"
           MFA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
           SESSION_SECRET="$(openssl rand -hex 32)"
           echo "::add-mask::$DATABASE_URL"
