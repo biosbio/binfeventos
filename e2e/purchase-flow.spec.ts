@@ -58,12 +58,22 @@ test.describe("Fluxo completo de compra", () => {
         buyerName: creds.buyerName,
         buyerEmail: creds.buyerEmail,
         attendees: [
-          { ticketTypeId: items[0]!.ticketTypeId, fullName: "Titular Um E2E" },
-          { ticketTypeId: items[0]!.ticketTypeId, fullName: "Titular Dois E2E" },
+          {
+            ticketTypeId: items[0]!.ticketTypeId,
+            fullName: "Titular Um E2E",
+            documentType: "TEST",
+            documentNumber: "E2E-001",
+          },
+          {
+            ticketTypeId: items[0]!.ticketTypeId,
+            fullName: "Titular Dois E2E",
+            documentType: "TEST",
+            documentNumber: "E2E-002",
+          },
         ],
       },
     });
-    expect(order.ok()).toBeTruthy();
+    expect(order.ok(), `API de encomenda (${order.status()}): ${await order.text()}`).toBeTruthy();
     const orderData = (await order.json()).order as {
       orderId: string; orderNumber: string; totalCents: number; status: string;
     };
