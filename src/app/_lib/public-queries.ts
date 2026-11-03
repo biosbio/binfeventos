@@ -71,12 +71,13 @@ export interface PublicEventDetail {
   coverImageUrl: string | null;
   entryRules: string | null;
   terms: string | null;
-  sessions: { id: string; startsAt: Date; endsAt: Date; city: string | null }[];
-  ticketTypes: { id: string; name: string; category: string; basePriceCents: number; requiresIdentity: boolean }[];
+  sessions: { id: string; startsAt: Date; endsAt: Date; city: string | null; hasOpenInventory: boolean; ticketsAvailable: boolean }[];
+  ticketTypes: { id: string; name: string; category: string; description: string | null; basePriceCents: number; currency: string; requiresIdentity: boolean }[];
 }
 
 /** Detalhe público por slug (eventos publicados apenas). */
 export async function getPublicEventBySlug(slug: string): Promise<PublicEventDetail | null> {
+  const now = new Date();
   const event = await prisma.event.findFirst({
     where: { slug, status: "PUBLISHED" },
     select: {
@@ -89,18 +90,29 @@ export async function getPublicEventBySlug(slug: string): Promise<PublicEventDet
       entryRules: true,
       terms: true,
       sessions: {
-        where: { endsAt: { gt: new Date() } },
+        where: { endsAt: { gt: now } },
         select: {
           id: true,
           startsAt: true,
           endsAt: true,
           venue: { select: { city: true, name: true } },
+          inventory: {
+            where: {
+              ticketType: { status: "ACTIVE" },
+              batch: { status: "OPEN" },
+            },
+            select: {
+              totalQuantity: true,
+              reservedQuantity: true,
+              soldQuantity: true,
+            },
+          },
         },
         orderBy: { startsAt: "asc" },
       },
       ticketTypes: {
         where: { status: "ACTIVE" },
-        select: { id: true, name: true, category: true, basePriceCents: true, requiresIdentity: true },
+        select: { id: true, name: true, category: true, description: true, basePriceCents: true, currency: true, requiresIdentity: true },
         orderBy: { basePriceCents: "asc" },
       },
     },
@@ -114,6 +126,10 @@ export async function getPublicEventBySlug(slug: string): Promise<PublicEventDet
       startsAt: s.startsAt,
       endsAt: s.endsAt,
       city: s.venue?.city ?? s.venue?.name ?? null,
+      hasOpenInventory: s.inventory.length > 0,
+      ticketsAvailable: s.inventory.some(
+        (inventory) => inventory.totalQuantity > inventory.reservedQuantity + inventory.soldQuantity,
+      ),
     })),
     ticketTypes: event.ticketTypes,
   };

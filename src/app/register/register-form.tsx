@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import BrandLogo from "../_components/brand-logo";
 
 // ============================================================
@@ -11,18 +12,17 @@ import BrandLogo from "../_components/brand-logo";
 // ============================================================
 
 export default function RegisterForm({ nextPath }: { nextPath: string }) {
+  const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setSuccess(null);
     setLoading(true);
     try {
       const res = await fetch("/api/users/register", {
@@ -35,11 +35,7 @@ export default function RegisterForm({ nextPath }: { nextPath: string }) {
         setError(data.message ?? "Não foi possível criar a conta.");
         return;
       }
-      setSuccess("Conta criada! Pode entrar com as suas credenciais.");
-      setFullName("");
-      setEmail("");
-      setPhone("");
-      setPassword("");
+      router.push(`/register/confirmation?next=${encodeURIComponent(nextPath)}`);
     } catch {
       setError("Erro de rede. Tente novamente.");
     } finally {
@@ -57,13 +53,6 @@ export default function RegisterForm({ nextPath }: { nextPath: string }) {
         <p>Compre bilhetes, guarde os seus lugares e receba os bilhetes digitais no seu email.</p>
 
         {error ? <div className="form-error" role="alert">{error}</div> : null}
-        {success ? (
-          <div className="form-success" role="status">
-            {success}{" "}
-            <Link href={`/login?next=${encodeURIComponent(nextPath)}`}>Entrar para continuar</Link>
-          </div>
-        ) : null}
-
         <form onSubmit={handleSubmit}>
           <div className="form-field">
             <label htmlFor="fullName">Nome completo</label>

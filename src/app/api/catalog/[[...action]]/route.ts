@@ -39,6 +39,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, ticketType }, { status: 201 });
     }
 
+    if (path === "ticket-types/quantity") {
+      const auth = await requirePermission("ticketType:manage");
+      const body = parse(
+        (await import("@/modules/inventory/schemas")).updateTicketTypeQuantitySchema,
+        await req.json(),
+      );
+      const { updateTicketTypeQuantity } = await import("@/modules/inventory/service");
+      const result = await updateTicketTypeQuantity(auth, body);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
     if (path === "batches") {
       const auth = await requirePermission("batch:manage");
       const body = parse((await import("@/modules/inventory/schemas")).createBatchSchema, await req.json());

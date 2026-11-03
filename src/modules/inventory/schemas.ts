@@ -19,6 +19,13 @@ export const createTicketTypeSchema = z.object({
   description: z.string().trim().max(2000).optional(),
   basePriceCents: z.number().int().min(0).max(100_000_000), // preço em cêntimos, validado no servidor
   requiresIdentity: z.boolean().default(true),
+  quantity: z.number().int().positive().max(1_000_000),
+  maxPerBuyer: z.number().int().min(1).max(1_000_000).default(10),
+});
+
+export const updateTicketTypeQuantitySchema = z.object({
+  ticketTypeId: z.string().uuid(),
+  quantity: z.number().int().positive().max(1_000_000),
 });
 
 export const createBatchSchema = z.object({
@@ -27,12 +34,7 @@ export const createBatchSchema = z.object({
   name: z.string().trim().min(2).max(120),
   quantity: z.number().int().positive().max(1_000_000),
   priceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
-  startsAt: z.coerce.date(),
-  endsAt: z.coerce.date(),
-  maxPerBuyer: z.number().int().min(1).max(50).default(10),
-}).refine((v) => v.endsAt > v.startsAt, {
-  message: "endsAt deve ser posterior a startsAt.",
-  path: ["endsAt"],
+  maxPerBuyer: z.number().int().min(1).max(1_000_000).default(10),
 });
 
 // Pedido de reserva temporária: só identificadores + quantidade.
@@ -54,5 +56,6 @@ export const releaseHoldSchema = z.object({
 });
 
 export type CreateTicketTypeInput = z.infer<typeof createTicketTypeSchema>;
+export type UpdateTicketTypeQuantityInput = z.infer<typeof updateTicketTypeQuantitySchema>;
 export type CreateBatchInput = z.infer<typeof createBatchSchema>;
 export type HoldRequestInput = z.infer<typeof holdRequestSchema>;

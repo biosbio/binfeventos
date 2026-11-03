@@ -7,7 +7,16 @@ function makeSlug(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-export default function PlatformEventForm() {
+function nextCalendarDate(value: string): string | undefined {
+  if (!value) return undefined;
+  const next = new Date(`${value}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+type CountryOption = { code: string; name: string };
+
+export default function PlatformEventForm({ countryOptions }: { countryOptions: CountryOption[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -17,6 +26,11 @@ export default function PlatformEventForm() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
+  const [eventDuration, setEventDuration] = useState<"one-day" | "multiple-days">("one-day");
+  const [venueName, setVenueName] = useState("");
+  const [venueAddress, setVenueAddress] = useState("");
+  const [venueCity, setVenueCity] = useState("");
+  const [venueCountry, setVenueCountry] = useState("AO");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -47,8 +61,14 @@ export default function PlatformEventForm() {
           description: description || undefined,
           category,
           coverImageUrl,
-          startsAt: new Date(startsAt).toISOString(),
-          endsAt: new Date(endsAt).toISOString(),
+          venue: {
+            name: venueName,
+            address: venueAddress || undefined,
+            city: venueCity,
+            country: venueCountry,
+          },
+          startsAt: new Date(`${startsAt}T00:00:00.000Z`).toISOString(),
+          endsAt: new Date(`${eventDuration === "one-day" ? startsAt : endsAt}T23:59:59.999Z`).toISOString(),
         }),
       });
       const data = await response.json();
@@ -105,12 +125,43 @@ export default function PlatformEventForm() {
           <input id="platform-event-cover" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setCoverFile(e.target.files?.[0] ?? null)} />
         </div>
         <fieldset className="form-field">
-          <legend>Sessão inicial *</legend>
-          <label htmlFor="platform-event-start">Início</label>
-          <input id="platform-event-start" type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-          <label htmlFor="platform-event-end">Fim</label>
-          <input id="platform-event-end" type="datetime-local" required value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+          <legend>Duração do evento *</legend>
+          <label>
+            <input type="radio" name="platform-event-duration" checked={eventDuration === "one-day"} onChange={() => setEventDuration("one-day")} />
+            {" "}Um dia
+          </label>
+          <label>
+            <input type="radio" name="platform-event-duration" checked={eventDuration === "multiple-days"} onChange={() => setEventDuration("multiple-days")} />
+            {" "}Vários dias
+          </label>
+          <label htmlFor="platform-event-start">{eventDuration === "one-day" ? "Data do evento *" : "Data de início *"}</label>
+          <input id="platform-event-start" type="date" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+          {eventDuration === "multiple-days" ? (
+            <>
+              <label htmlFor="platform-event-end">Data de fim *</label>
+              <input id="platform-event-end" type="date" required min={nextCalendarDate(startsAt)} value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+            </>
+          ) : null}
         </fieldset>
+        <h2>Local do evento</h2>
+        <div className="form-field">
+          <label htmlFor="platform-venue-name">Nome do local *</label>
+          <input id="platform-venue-name" required minLength={2} maxLength={150} value={venueName} onChange={(event) => setVenueName(event.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="platform-venue-address">Endereço</label>
+          <input id="platform-venue-address" maxLength={300} value={venueAddress} onChange={(event) => setVenueAddress(event.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="platform-venue-city">Cidade *</label>
+          <input id="platform-venue-city" required minLength={2} maxLength={100} value={venueCity} onChange={(event) => setVenueCity(event.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="platform-venue-country">País *</label>
+          <select id="platform-venue-country" required value={venueCountry} onChange={(event) => setVenueCountry(event.target.value)}>
+            {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
+          </select>
+        </div>
         <button className="button button-primary" type="submit" disabled={busy}>
           {busy ? "A criar evento…" : "Criar rascunho"}
         </button>

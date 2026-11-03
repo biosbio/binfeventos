@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
+function nextCalendarDate(value: string): string | undefined {
+  if (!value) return undefined;
+  const next = new Date(`${value}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
 type EditableEvent = {
   id: string;
   name: string;
@@ -11,10 +18,37 @@ type EditableEvent = {
   description: string | null;
   category: "CONCERT" | "CONFERENCE" | "SPORT" | "THEATER" | "FESTIVAL" | "WORKSHOP" | "OTHER";
   coverImageUrl: string | null;
-  sessions: { id: string; startsAt: Date; endsAt: Date }[];
+  sessions: {
+    id: string;
+    startsAt: Date;
+    endsAt: Date;
+    venue: { name: string; address: string | null; city: string | null; country: string } | null;
+  }[];
 };
+type CountryOption = { code: string; name: string };
 
-export default function EditEventForm({ event }: { event: EditableEvent }) {
+function dateInputValue(date: Date | undefined): string {
+  return date?.toISOString().slice(0, 10) ?? "";
+}
+
+export default function EditEventForm({
+  event,
+  countryOptions,
+}: {
+  event: EditableEvent;
+  countryOptions: CountryOption[];
+}) {
+  const firstSession = event.sessions.reduce<EditableEvent["sessions"][number] | undefined>(
+    (first, session) => !first || session.startsAt < first.startsAt ? session : first,
+    undefined,
+  );
+  const lastSession = event.sessions.reduce<EditableEvent["sessions"][number] | undefined>(
+    (last, session) => !last || session.endsAt > last.endsAt ? session : last,
+    undefined,
+  );
+  const initialStartDate = dateInputValue(firstSession?.startsAt);
+  const initialEndDate = dateInputValue(lastSession?.endsAt);
+  const initialVenue = firstSession?.venue;
   const router = useRouter();
   const [name, setName] = useState(event.name);
   const [slug, setSlug] = useState(event.slug);
@@ -25,10 +59,15 @@ export default function EditEventForm({ event }: { event: EditableEvent }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [sessionStartsAt, setSessionStartsAt] = useState("");
-  const [sessionEndsAt, setSessionEndsAt] = useState("");
-  const [sessionError, setSessionError] = useState("");
-  const [sessionBusy, setSessionBusy] = useState(false);
+  const [eventStartDate, setEventStartDate] = useState(initialStartDate);
+  const [eventEndDate, setEventEndDate] = useState(initialEndDate);
+  const [eventDuration, setEventDuration] = useState<"one-day" | "multiple-days">(
+    initialStartDate === initialEndDate ? "one-day" : "multiple-days",
+  );
+  const [venueName, setVenueName] = useState(initialVenue?.name ?? "");
+  const [venueAddress, setVenueAddress] = useState(initialVenue?.address ?? "");
+  const [venueCity, setVenueCity] = useState(initialVenue?.city ?? "");
+  const [venueCountry, setVenueCountry] = useState(initialVenue?.country ?? "AO");
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -57,6 +96,14 @@ export default function EditEventForm({ event }: { event: EditableEvent }) {
           description,
           category,
           coverImageUrl: uploadedCoverUrl,
+          venue: {
+            name: venueName,
+            address: venueAddress || undefined,
+            city: venueCity,
+            country: venueCountry,
+          },
+          startsAt: new Date(`${eventStartDate}T00:00:00.000Z`).toISOString(),
+          endsAt: new Date(`${eventDuration === "one-day" ? eventStartDate : eventEndDate}T23:59:59.999Z`).toISOString(),
         }),
       });
       const data = await response.json();
@@ -70,34 +117,6 @@ export default function EditEventForm({ event }: { event: EditableEvent }) {
       setError("Erro de rede ao guardar as alterações. Tente novamente.");
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function addSession(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSessionBusy(true);
-    setSessionError("");
-    try {
-      const response = await fetch(`/api/events/${event.id}/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startsAt: new Date(sessionStartsAt).toISOString(),
-          endsAt: new Date(sessionEndsAt).toISOString(),
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setSessionError(data.message ?? "Não foi possível adicionar a sessão.");
-        return;
-      }
-      setSessionStartsAt("");
-      setSessionEndsAt("");
-      router.refresh();
-    } catch {
-      setSessionError("Erro de rede ao adicionar a sessão. Tente novamente.");
-    } finally {
-      setSessionBusy(false);
     }
   }
 
@@ -126,6 +145,71 @@ export default function EditEventForm({ event }: { event: EditableEvent }) {
             <option value="OTHER">Outro</option>
           </select>
         </div>
+        <fieldset className="form-field">
+          <legend>Duração do evento *</legend>
+          <label>
+            <input
+              type="radio"
+              name="event-duration"
+              checked={eventDuration === "one-day"}
+              onChange={() => setEventDuration("one-day")}
+            />
+            {" "}Um dia
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="event-duration"
+              checked={eventDuration === "multiple-days"}
+              onChange={() => setEventDuration("multiple-days")}
+            />
+            {" "}Mais de um dia
+          </label>
+        </fieldset>
+        <div className="form-field">
+          <label htmlFor="event-start-date">
+            {eventDuration === "one-day" ? "Data de realização *" : "Data de início *"}
+          </label>
+          <input
+            id="event-start-date"
+            type="date"
+            required
+            value={eventStartDate}
+            onChange={(inputEvent) => setEventStartDate(inputEvent.target.value)}
+          />
+        </div>
+        {eventDuration === "multiple-days" ? (
+          <div className="form-field">
+            <label htmlFor="event-end-date">Data de fim *</label>
+            <input
+              id="event-end-date"
+              type="date"
+              required
+              min={nextCalendarDate(eventStartDate)}
+              value={eventEndDate}
+              onChange={(inputEvent) => setEventEndDate(inputEvent.target.value)}
+            />
+          </div>
+        ) : null}
+        <h3>Local do evento</h3>
+        <div className="form-field">
+          <label htmlFor="event-venue-name">Nome do local *</label>
+          <input id="event-venue-name" required minLength={2} maxLength={150} value={venueName} onChange={(inputEvent) => setVenueName(inputEvent.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-venue-address">Endereço</label>
+          <input id="event-venue-address" maxLength={300} value={venueAddress} onChange={(inputEvent) => setVenueAddress(inputEvent.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-venue-city">Cidade *</label>
+          <input id="event-venue-city" required minLength={2} maxLength={100} value={venueCity} onChange={(inputEvent) => setVenueCity(inputEvent.target.value)} />
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-venue-country">País *</label>
+          <select id="event-venue-country" required value={venueCountry} onChange={(inputEvent) => setVenueCountry(inputEvent.target.value)}>
+            {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
+          </select>
+        </div>
         <div className="form-field">
           <label htmlFor="event-description">Descrição</label>
           <textarea id="event-description" rows={5} maxLength={5000} value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -140,34 +224,6 @@ export default function EditEventForm({ event }: { event: EditableEvent }) {
         </button>
       </form>
 
-      <section className="panel">
-        <h2>Sessões</h2>
-        {event.sessions.length ? (
-          <ul>
-            {event.sessions.map((session) => (
-              <li key={session.id}>
-                {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeStyle: "short" }).format(session.startsAt)}
-                {" — "}
-                {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeStyle: "short" }).format(session.endsAt)}
-              </li>
-            ))}
-          </ul>
-        ) : <p className="form-help">Adicione uma sessão futura antes de a proposta poder ser aprovada.</p>}
-        <form style={{ display: "grid", gap: 14, marginTop: 16 }} onSubmit={addSession}>
-          {sessionError ? <p className="form-error" role="alert">{sessionError}</p> : null}
-          <div className="form-field">
-            <label htmlFor="session-start">Início da sessão</label>
-            <input id="session-start" type="datetime-local" required value={sessionStartsAt} onChange={(e) => setSessionStartsAt(e.target.value)} />
-          </div>
-          <div className="form-field">
-            <label htmlFor="session-end">Fim da sessão</label>
-            <input id="session-end" type="datetime-local" required value={sessionEndsAt} onChange={(e) => setSessionEndsAt(e.target.value)} />
-          </div>
-          <button className="button button-secondary" type="submit" disabled={sessionBusy}>
-            {sessionBusy ? "A adicionar…" : "Adicionar sessão"}
-          </button>
-        </form>
-      </section>
     </div>
   );
 }

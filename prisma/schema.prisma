@@ -365,10 +365,10 @@ model TicketBatch {
   name         String
   quantity     Int
   priceCents   Int?
-  startsAt     DateTime
-  endsAt       DateTime
+  startsAt     DateTime?
+  endsAt       DateTime?
   maxPerBuyer  Int         @default(10)
-  status       BatchStatus @default(SCHEDULED)
+  status       BatchStatus @default(OPEN)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 

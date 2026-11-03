@@ -10,7 +10,12 @@ import {
 import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
-import type { CreateBatchInput, CreateTicketTypeInput, HoldRequestInput } from "./schemas";
+import type {
+  CreateBatchInput,
+  CreateTicketTypeInput,
+  HoldRequestInput,
+  UpdateTicketTypeQuantityInput,
+} from "./schemas";
 
 // ============================================================
 // Módulo inventory — núcleo transacional (Domínio 3).
@@ -24,8 +29,8 @@ import type { CreateBatchInput, CreateTicketTypeInput, HoldRequestInput } from "
 // 4. Estado VERIFYING protege o inventário enquanto o pagamento
 //    não tem resultado definitivo (nunca expira automaticamente).
 // 5. Expiração de reservas por job periódico (releaseExpiredHolds).
-// 6. Estados do lote geridos por rota auditada (SCHEDULED/OPEN/
-//    PAUSED/CLOSED) — sem isso os lotes nunca ficavam à venda.
+// 6. Lotes contínuos ficam OPEN; uma rota auditada permite ao organizador
+//    terminar as vendas manualmente.
 // ============================================================
 
 /** Duração padrão da reserva temporária (10 minutos). */
@@ -45,25 +50,61 @@ async function scopedTicketType(ctx: AuthContext, ticketTypeId: string) {
 /** Criar tipo de bilhete (preço base validado no servidor). */
 export async function createTicketType(ctx: AuthContext, input: CreateTicketTypeInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const organizationId = ctx.organizationId;
 
-  const event = await prisma.event.findUnique({ where: { id: input.eventId } });
-  if (!event || event.organizationId !== ctx.organizationId) throw new NotFoundError("Evento");
+  const event = await prisma.event.findUnique({
+    where: { id: input.eventId },
+    include: {
+      organization: { select: { currency: true } },
+      sessions: { select: { id: true } },
+    },
+  });
+  if (!event || event.organizationId !== organizationId) throw new NotFoundError("Evento");
   if (["CANCELLED", "COMPLETED", "CLOSED"].includes(event.status)) {
     throw new BusinessRuleError("Evento em estado terminal.");
   }
+  if (event.sessions.length !== 1) {
+    throw new BusinessRuleError(
+      "Atualize as datas do evento para uma única duração no painel antes de publicar os bilhetes.",
+    );
+  }
 
-  const ticketType = await prisma.ticketType.create({
-    data: {
-      eventId: event.id,
-      organizationId: ctx.organizationId,
-      name: input.name,
-      category: input.category,
-      description: input.description ?? null,
-      basePriceCents: input.basePriceCents,
-      requiresIdentity: input.requiresIdentity,
-      status: "ACTIVE",
-    },
-    select: { id: true, name: true, category: true, basePriceCents: true },
+  const ticketType = await prisma.$transaction(async (tx) => {
+    const created = await tx.ticketType.create({
+      data: {
+        eventId: event.id,
+        organizationId,
+        name: input.name,
+        category: input.category,
+        description: input.description ?? null,
+        basePriceCents: input.basePriceCents,
+        currency: event.organization.currency,
+        requiresIdentity: input.requiresIdentity,
+        status: "ACTIVE",
+      },
+      select: { id: true, name: true, category: true, basePriceCents: true },
+    });
+
+    const batch = await tx.ticketBatch.create({
+      data: {
+        ticketTypeId: created.id,
+        name: "Venda contínua",
+        quantity: input.quantity,
+        maxPerBuyer: input.maxPerBuyer,
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    await tx.ticketInventory.createMany({
+      data: event.sessions.map((session) => ({
+        sessionId: session.id,
+        ticketTypeId: created.id,
+        batchId: batch.id,
+        totalQuantity: input.quantity,
+      })),
+    });
+
+    return created;
   });
 
   await writeAudit({
@@ -74,6 +115,112 @@ export async function createTicketType(ctx: AuthContext, input: CreateTicketType
   });
 
   return ticketType;
+}
+
+/** Define ou ajusta a quantidade do lote contínuo de um tipo de bilhete. */
+export async function updateTicketTypeQuantity(
+  ctx: AuthContext,
+  input: UpdateTicketTypeQuantityInput,
+) {
+  const ticketType = await scopedTicketType(ctx, input.ticketTypeId);
+  if (["CANCELLED", "COMPLETED", "CLOSED"].includes(ticketType.event.status)) {
+    throw new BusinessRuleError("Evento em estado terminal.");
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const sessions = await tx.eventSession.findMany({
+      where: { eventId: ticketType.event.id, endsAt: { gt: new Date() } },
+      select: { id: true },
+    });
+    const batches = await tx.ticketBatch.findMany({
+      where: { ticketTypeId: ticketType.id },
+      select: { id: true, quantity: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (sessions.length !== 1) {
+      throw new BusinessRuleError(
+        "Atualize as datas do evento para uma única duração no painel antes de definir as quantidades.",
+      );
+    }
+    if (batches.length > 1) {
+      throw new BusinessRuleError(
+        "Este tipo tem vários lotes; a quantidade deve ser alterada em cada lote.",
+      );
+    }
+
+    const existingBatch = batches[0];
+    const batch = existingBatch
+      ? await tx.ticketBatch.update({
+          where: { id: existingBatch.id },
+          data: { quantity: input.quantity },
+          select: { id: true, quantity: true, status: true },
+        })
+      : await tx.ticketBatch.create({
+          data: {
+            ticketTypeId: ticketType.id,
+            name: "Venda contínua",
+            quantity: input.quantity,
+            status: "OPEN",
+          },
+          select: { id: true, quantity: true, status: true },
+        });
+
+    for (const session of sessions) {
+      const inventory = await tx.ticketInventory.findUnique({
+        where: {
+          sessionId_ticketTypeId_batchId: {
+            sessionId: session.id,
+            ticketTypeId: ticketType.id,
+            batchId: batch.id,
+          },
+        },
+        select: { id: true, soldQuantity: true, reservedQuantity: true },
+      });
+
+      if (inventory) {
+        if (input.quantity < inventory.soldQuantity + inventory.reservedQuantity) {
+          throw new BusinessRuleError(
+            "A quantidade não pode ficar abaixo dos bilhetes vendidos ou reservados.",
+          );
+        }
+        await tx.ticketInventory.update({
+          where: { id: inventory.id },
+          data: { totalQuantity: input.quantity },
+        });
+      } else {
+        await tx.ticketInventory.create({
+          data: {
+            sessionId: session.id,
+            ticketTypeId: ticketType.id,
+            batchId: batch.id,
+            totalQuantity: input.quantity,
+          },
+        });
+      }
+    }
+
+    return {
+      batchId: batch.id,
+      previousQuantity: existingBatch?.quantity ?? 0,
+      quantity: batch.quantity,
+      status: batch.status,
+    };
+  });
+
+  await writeAudit({
+    organizationId: ticketType.organizationId,
+    actorUserId: ctx.userId,
+    action: "ticket_type.updated",
+    before: { ticketTypeId: ticketType.id, quantity: result.previousQuantity },
+    after: { ticketTypeId: ticketType.id, quantity: result.quantity },
+  });
+
+  return {
+    batchId: result.batchId,
+    quantity: result.quantity,
+    status: result.status,
+  };
 }
 
 /** Criar lote + inventário da sessão em transação atômica. */
@@ -93,10 +240,10 @@ export async function createBatch(ctx: AuthContext, input: CreateBatchInput) {
         name: input.name,
         quantity: input.quantity,
         priceCents: input.priceCents ?? null,
-        startsAt: input.startsAt,
-        endsAt: input.endsAt,
+        startsAt: null,
+        endsAt: null,
         maxPerBuyer: input.maxPerBuyer,
-        status: "SCHEDULED",
+        status: "OPEN",
       },
       select: { id: true, name: true },
     });
@@ -133,8 +280,8 @@ export async function createBatch(ctx: AuthContext, input: CreateBatchInput) {
 }
 
 /**
- * Transição de estado do lote (SCHEDULED → OPEN → PAUSED → OPEN → CLOSED).
- * Sem isto os lotes nunca ficavam à venda (bug corrigido na Parte 19).
+ * Transição de estado do lote (OPEN → PAUSED → OPEN → CLOSED).
+ * A venda decorre sem prazo e o organizador pode terminá-la manualmente.
  * SOLD_OUT é automático: só o job/sistema o define; manualmente apenas
  * OPEN/PAUSED/CLOSED.
  */
@@ -147,20 +294,18 @@ export async function transitionBatch(
 
   const tt = await prisma.ticketType.findFirst({
     where: { batches: { some: { id: batchId } } },
-    select: { organizationId: true },
+    select: { organizationId: true, status: true },
   });
   if (!tt || tt.organizationId !== ctx.organizationId) throw new NotFoundError("Lote");
+  if (tt.status !== "ACTIVE" && to === "OPEN") {
+    throw new BusinessRuleError("Ative o tipo de bilhete antes de abrir o lote.");
+  }
 
   const batch = await prisma.ticketBatch.findUnique({ where: { id: batchId } });
   if (!batch) throw new NotFoundError("Lote");
   if (batch.status === to) throw new ConflictError(`Lote já está ${to}.`);
   if (batch.status === "SOLD_OUT" && to !== "CLOSED") {
     throw new BusinessRuleError("Lote esgotado: apenas pode ser encerrado.");
-  }
-
-  // Abrir exige janela de comercialização válida (datas validadas no servidor)
-  if (to === "OPEN" && (batch.endsAt.getTime() <= Date.now())) {
-    throw new BusinessRuleError("Janela de comercialização já terminou.");
   }
 
   await prisma.ticketBatch.update({ where: { id: batchId }, data: { status: to } });
@@ -195,23 +340,22 @@ export async function getAvailability(sessionId: string) {
   const rows = await prisma.ticketInventory.findMany({
     where: { sessionId },
     include: {
-      ticketType: { select: { id: true, name: true, category: true, basePriceCents: true, currency: true, requiresIdentity: true } },
+      ticketType: { select: { id: true, name: true, category: true, description: true, basePriceCents: true, currency: true, requiresIdentity: true, status: true } },
       batch: { select: { id: true, name: true, priceCents: true, startsAt: true, endsAt: true, maxPerBuyer: true, status: true } },
     },
   });
 
-  const now = Date.now();
   return rows.map((r) => {
     const batchOpen =
-      r.batch.status === "OPEN" &&
-      r.batch.startsAt.getTime() <= now &&
-      r.batch.endsAt.getTime() > now;
+      r.ticketType.status === "ACTIVE" &&
+      r.batch.status === "OPEN";
     const unitPriceCents = r.batch.priceCents ?? r.ticketType.basePriceCents;
     return {
       ticketTypeId: r.ticketType.id,
       batchId: r.batch.id,
       name: r.ticketType.name,
       category: r.ticketType.category,
+      description: r.ticketType.description,
       unitPriceCents,
       currency: r.ticketType.currency,
       requiresIdentity: r.ticketType.requiresIdentity,
@@ -237,7 +381,7 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     where: { id: input.ticketTypeId },
     include: { event: { select: { status: true } } },
   });
-  if (!tt || tt.event.status !== "PUBLISHED") {
+  if (!tt || tt.event.status !== "PUBLISHED" || tt.status !== "ACTIVE") {
     throw new NotFoundError("Tipo de bilhete disponível");
   }
   const organizationId = tt.organizationId;
@@ -325,11 +469,10 @@ export async function createHold(ctx: AuthContext, input: HoldRequestInput) {
     });
     const batch = await tx.ticketBatch.findUnique({
       where: { id: input.batchId },
-      select: { maxPerBuyer: true, status: true, startsAt: true, endsAt: true },
+      select: { maxPerBuyer: true, status: true },
     });
     if (!batch) throw new NotFoundError("Lote");
-    const now = Date.now();
-    if (batch.status !== "OPEN" || batch.startsAt.getTime() > now || batch.endsAt.getTime() <= now) {
+    if (batch.status !== "OPEN") {
       throw new BusinessRuleError("Lote não está em comercialização.");
     }
     if ((userHolds._sum.quantity ?? 0) + input.quantity > batch.maxPerBuyer) {

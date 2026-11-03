@@ -66,8 +66,7 @@ export default async function TicketPage({
     weekday: "long",
     day: "2-digit",
     month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
+    timeZone: "UTC",
   }).format(ticket!.session.startsAt);
 
   return (

@@ -3,8 +3,10 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { getAuthContext } from "@/shared/auth";
 import { prisma } from "@/shared/lib/prisma";
+import { getCountryOptions } from "@/shared/lib/locale-options";
 import { SiteFooter, SiteHeader } from "../../../_components/site-shell";
 import EditEventForm from "./edit-form";
+import TicketInventoryManager from "./ticket-inventory-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,7 @@ export default async function ManageEventPage({
   if (!ctx) redirect("/login?next=%2Fpainel");
   if (ctx.platformRole === "PLATFORM_ADMIN") redirect("/admin");
   if (!ctx.organizationId || !ctx.permissions.has("event:update")) {
-    redirect("/minha-conta?aviso=criar-evento");
+    redirect("/organizador");
   }
 
   const { id } = await params;
@@ -36,9 +38,45 @@ export default async function ManageEventPage({
       category: true,
       coverImageUrl: true,
       status: true,
+      organization: { select: { currency: true } },
       sessions: {
-        select: { id: true, startsAt: true, endsAt: true },
+        select: {
+          id: true,
+          startsAt: true,
+          endsAt: true,
+          venue: { select: { name: true, address: true, city: true, country: true } },
+        },
         orderBy: { startsAt: "asc" },
+      },
+      ticketTypes: {
+        select: {
+          id: true,
+          name: true,
+          category: true,
+          description: true,
+          basePriceCents: true,
+          currency: true,
+          requiresIdentity: true,
+          status: true,
+          batches: {
+            select: {
+              id: true,
+              name: true,
+              quantity: true,
+              status: true,
+              inventory: {
+                select: {
+                  sessionId: true,
+                  totalQuantity: true,
+                  soldQuantity: true,
+                  reservedQuantity: true,
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+        },
+        orderBy: { createdAt: "asc" },
       },
     },
   });
@@ -53,7 +91,13 @@ export default async function ManageEventPage({
         <p className="section-copy">
           Estado atual: <strong>{event.status}</strong>. Um evento novo só fica público após aprovação da equipa BINF EVENTOS.
         </p>
-        <EditEventForm event={event} />
+        <EditEventForm event={event} countryOptions={getCountryOptions()} />
+        <TicketInventoryManager
+          eventId={event.id}
+          sessions={event.sessions}
+          ticketTypes={event.ticketTypes}
+          currency={event.organization.currency}
+        />
         <p className="auth-switch"><Link href="/painel">Voltar aos meus eventos</Link></p>
       </main>
       <SiteFooter />

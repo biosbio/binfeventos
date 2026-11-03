@@ -9,14 +9,23 @@ function makeSlug(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+function nextCalendarDate(value: string): string | undefined {
+  if (!value) return undefined;
+  const next = new Date(`${value}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
 type Option = { code: string; name: string };
 
 export default function NewEventForm({
   needsOrganization,
+  initialCountry,
   countryOptions,
   currencyOptions,
 }: {
   needsOrganization: boolean;
+  initialCountry: string;
   countryOptions: Option[];
   currencyOptions: Option[];
 }) {
@@ -25,7 +34,7 @@ export default function NewEventForm({
   const [organizationName, setOrganizationName] = useState("");
   const [organizationSlug, setOrganizationSlug] = useState("");
   const [organizationSlugEdited, setOrganizationSlugEdited] = useState(false);
-  const [organizationCountry, setOrganizationCountry] = useState("GW");
+  const [organizationCountry, setOrganizationCountry] = useState(initialCountry);
   const [organizationCurrency, setOrganizationCurrency] = useState("XOF");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -33,6 +42,13 @@ export default function NewEventForm({
   const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("OTHER");
+  const [eventDuration, setEventDuration] = useState<"one-day" | "multiple-days">("one-day");
+  const [eventStartDate, setEventStartDate] = useState("");
+  const [eventEndDate, setEventEndDate] = useState("");
+  const [venueName, setVenueName] = useState("");
+  const [venueAddress, setVenueAddress] = useState("");
+  const [venueCity, setVenueCity] = useState("");
+  const [venueCountry, setVenueCountry] = useState(initialCountry);
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +94,21 @@ export default function NewEventForm({
       const res = await fetch("/api/events/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, slug: slug || undefined, description: description || undefined, category, coverImageUrl: uploadedCoverUrl }),
+        body: JSON.stringify({
+          name,
+          slug: slug || undefined,
+          description: description || undefined,
+          category,
+          coverImageUrl: uploadedCoverUrl,
+          venue: {
+            name: venueName,
+            address: venueAddress || undefined,
+            city: venueCity,
+            country: venueCountry,
+          },
+          startsAt: new Date(`${eventStartDate}T00:00:00.000Z`).toISOString(),
+          endsAt: new Date(`${eventDuration === "one-day" ? eventStartDate : eventEndDate}T23:59:59.999Z`).toISOString(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -145,7 +175,10 @@ export default function NewEventForm({
                     </div>
                     <div className="form-field">
                       <label htmlFor="organization-country">País *</label>
-                      <select id="organization-country" required value={organizationCountry} onChange={(e) => setOrganizationCountry(e.target.value)}>
+                      <select id="organization-country" required value={organizationCountry} onChange={(e) => {
+                        setOrganizationCountry(e.target.value);
+                        setVenueCountry(e.target.value);
+                      }}>
                         {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
                       </select>
                     </div>
@@ -175,6 +208,73 @@ export default function NewEventForm({
                   <label htmlFor="event-category">Categoria *</label>
                   <select id="event-category" value={category} onChange={(e) => setCategory(e.target.value)}>
                     <option value="CONCERT">Concerto</option><option value="CONFERENCE">Conferência</option><option value="SPORT">Desporto</option><option value="THEATER">Teatro</option><option value="FESTIVAL">Festival</option><option value="WORKSHOP">Workshop</option><option value="OTHER">Outro</option>
+                  </select>
+                </div>
+                <fieldset className="form-field">
+                  <legend>Duração do evento *</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="event-duration"
+                      value="one-day"
+                      checked={eventDuration === "one-day"}
+                      onChange={() => setEventDuration("one-day")}
+                    />
+                    {" "}Um dia
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="event-duration"
+                      value="multiple-days"
+                      checked={eventDuration === "multiple-days"}
+                      onChange={() => setEventDuration("multiple-days")}
+                    />
+                    {" "}Vários dias
+                  </label>
+                </fieldset>
+                <div className="form-field">
+                  <label htmlFor="event-start-date">
+                    {eventDuration === "one-day" ? "Data do evento *" : "Data de início *"}
+                  </label>
+                  <input
+                    id="event-start-date"
+                    type="date"
+                    required
+                    value={eventStartDate}
+                    onChange={(event) => setEventStartDate(event.target.value)}
+                  />
+                </div>
+                {eventDuration === "multiple-days" ? (
+                  <div className="form-field">
+                    <label htmlFor="event-end-date">Data de fim *</label>
+                    <input
+                      id="event-end-date"
+                      type="date"
+                      required
+                      min={nextCalendarDate(eventStartDate)}
+                      value={eventEndDate}
+                      onChange={(event) => setEventEndDate(event.target.value)}
+                    />
+                  </div>
+                ) : null}
+                <h3>Local do evento</h3>
+                <div className="form-field">
+                  <label htmlFor="event-venue-name">Nome do local *</label>
+                  <input id="event-venue-name" required minLength={2} maxLength={150} value={venueName} onChange={(event) => setVenueName(event.target.value)} placeholder="Ex.: Estádio Nacional" />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="event-venue-address">Endereço</label>
+                  <input id="event-venue-address" maxLength={300} value={venueAddress} onChange={(event) => setVenueAddress(event.target.value)} placeholder="Rua, bairro ou referência" />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="event-venue-city">Cidade *</label>
+                  <input id="event-venue-city" required minLength={2} maxLength={100} value={venueCity} onChange={(event) => setVenueCity(event.target.value)} />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="event-venue-country">País *</label>
+                  <select id="event-venue-country" required value={venueCountry} onChange={(event) => setVenueCountry(event.target.value)}>
+                    {countryOptions.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}
                   </select>
                 </div>
                 <div className="form-field">

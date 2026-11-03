@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SiteHeader, SiteFooter } from "../_components/site-shell";
 import { getMyContext, listMyOrders } from "../_lib/my-queries";
+import { listPublicEvents } from "../_lib/public-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -27,24 +28,31 @@ const TICKET_LABELS: Record<string, string> = {
   REVOKED: "Revogado",
 };
 
+const CATEGORY_LABELS: Record<string, string> = {
+  CONCERT: "Concerto",
+  CONFERENCE: "Conferência",
+  SPORT: "Desporto",
+  THEATER: "Teatro",
+  FESTIVAL: "Festival",
+  WORKSHOP: "Workshop",
+  OTHER: "Experiência",
+};
+
 function formatPrice(cents: number, currency: string): string {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(cents / 100);
 }
 
-export default async function MyAccountPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ aviso?: string }>;
-}) {
-  const { aviso } = await searchParams;
+export default async function MyAccountPage() {
   let user;
   let orders;
-  let isAdmin = false;
+  let events;
   try {
     const context = await getMyContext();
     user = context.user;
-    isAdmin = context.ctx.platformRole === "PLATFORM_ADMIN";
-    orders = await listMyOrders(context.ctx.userId);
+    [orders, events] = await Promise.all([
+      listMyOrders(context.ctx.userId),
+      listPublicEvents(),
+    ]);
   } catch {
     redirect("/login");
   }
@@ -61,14 +69,7 @@ export default async function MyAccountPage({
           As suas encomendas e bilhetes digitais.
         </p>
 
-        {!isAdmin ? (
-          <div className="panel" role="status" style={{ marginTop: 22 }}>
-            <strong>{aviso === "criar-evento" ? "Ainda não tem uma organização? Pode começar por aqui." : "Também pode organizar eventos com esta conta."}</strong>
-            <p className="form-help">Crie o perfil da sua organização e submeta uma proposta. O evento só fica público após aprovação da equipa BINF EVENTOS.</p>
-            <Link className="button button-primary" href="/painel/eventos/novo">Propor um evento</Link>
-          </div>
-        ) : null}
-
+        <h2 style={{ marginTop: 30 }}>As minhas compras e bilhetes</h2>
         {orders.length === 0 ? (
           <div className="empty-state" style={{ marginTop: 30 }}>
             Ainda não tem encomendas.{" "}
@@ -137,6 +138,61 @@ export default async function MyAccountPage({
             ))}
           </div>
         )}
+
+        <section style={{ marginTop: 48 }}>
+          <div className="section-heading">
+            <div>
+              <span className="section-kicker">DESCUBRA</span>
+              <h2>Eventos disponíveis</h2>
+            </div>
+            <Link className="text-link" href="/#eventos">Ver todos →</Link>
+          </div>
+          {events.length === 0 ? (
+            <div className="empty-state">
+              Ainda não há eventos disponíveis. Volte em breve para descobrir novidades.
+            </div>
+          ) : (
+            <div className="event-grid">
+              {events.map((event) => (
+                <article key={event.id} className="event-card">
+                  <div className="event-cover">
+                    {event.coverImageUrl ? <img src={event.coverImageUrl} alt="" /> : null}
+                    <span>{CATEGORY_LABELS[event.category] ?? "Evento"}</span>
+                  </div>
+                  <div className="event-content">
+                    <div className="event-meta">
+                      <span>
+                        {new Intl.DateTimeFormat("pt-PT", {
+                          dateStyle: "medium",
+                          timeZone: "UTC",
+                        }).format(event.startsAt)}
+                      </span>
+                      {event.city ? <span>{event.city}</span> : null}
+                    </div>
+                    <h3>{event.name}</h3>
+                    <p>{event.description}</p>
+                    <div className="event-card-bottom">
+                      <div>
+                        <div className="price-label">Desde</div>
+                        <div className="price">
+                          {event.minPriceCents === null
+                            ? "Gratuito"
+                            : new Intl.NumberFormat("pt-PT", {
+                                style: "currency",
+                                currency: "AOA",
+                              }).format(event.minPriceCents / 100)}
+                        </div>
+                      </div>
+                      <Link className="text-link" href={`/eventos/${event.slug}`}>
+                        Ver detalhes →
+                      </Link>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </main>
       <SiteFooter />
     </>

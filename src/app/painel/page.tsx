@@ -28,7 +28,7 @@ export default async function OrganizerPanelPage() {
   if (ctx.platformRole === "PLATFORM_ADMIN") redirect("/admin");
 
   if (!ctx.permissions.has("event:read") || !ctx.organizationId) {
-    redirect("/minha-conta?aviso=criar-evento");
+    redirect("/organizador");
   }
 
   const orgId = ctx.organizationId;
@@ -77,7 +77,7 @@ export default async function OrganizerPanelPage() {
               <article key={event.id} className="panel dashboard-event">
                 <div>
                   <strong>{event.name}</strong>
-                  <div className="form-help">{event.sessions[0] ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short" }).format(event.sessions[0].startsAt) : "Sessão ainda não definida"}</div>
+                  <div className="form-help">{event.sessions[0] ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeZone: "UTC" }).format(event.sessions[0].startsAt) : "Sessão ainda não definida"}</div>
                 </div>
                 <span className={`status-pill status-${event.status.toLowerCase()}`}>{EVENT_STATUS_LABELS[event.status] ?? event.status}</span>
                 <Link className="text-link" href={`/painel/eventos/${event.id}`}>Gerir evento →</Link>

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   createEventSchema,
+  createOrganizerEventSchema,
   createPlatformEventSchema,
   sessionSchema,
   venueSchema,
   eventSlugSchema,
+  updateEventSchema,
 } from "../src/modules/events/schemas";
 
 describe("eventSlugSchema", () => {
@@ -44,6 +46,56 @@ describe("createEventSchema", () => {
   });
 });
 
+describe("createOrganizerEventSchema", () => {
+  const venue = {
+    name: "Arena BINF",
+    city: "Bissau",
+    country: "GW",
+  };
+
+  it("exige a data do evento e um fim posterior ao início", () => {
+    expect(createOrganizerEventSchema.safeParse({ name: "Show BINF" }).success).toBe(false);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      venue,
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(true);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(false);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      startsAt: "2027-01-02T23:59:59.999Z",
+      endsAt: "2027-01-02T00:00:00.000Z",
+    }).success).toBe(false);
+    expect(createOrganizerEventSchema.safeParse({
+      name: "Show BINF",
+      venue,
+      startsAt: "2027-01-02T18:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(false);
+  });
+});
+
+describe("updateEventSchema", () => {
+  it("aceita uma data para um dia ou início e fim para vários dias", () => {
+    expect(updateEventSchema.safeParse({
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
+    }).success).toBe(true);
+    expect(updateEventSchema.safeParse({
+      startsAt: "2027-01-02T00:00:00.000Z",
+    }).success).toBe(false);
+    expect(updateEventSchema.safeParse({
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-03T23:59:59.999Z",
+    }).success).toBe(true);
+  });
+});
+
 describe("sessionSchema", () => {
   const base = { eventId: "b3f1c0a0-0000-4000-8000-000000000001" };
 
@@ -58,18 +110,25 @@ describe("sessionSchema", () => {
   });
 
   describe("createPlatformEventSchema", () => {
+    const venue = {
+      name: "Arena BINF",
+      city: "Bissau",
+      country: "GW",
+    };
     const session = {
-      startsAt: "2027-01-02T18:00:00.000Z",
-      endsAt: "2027-01-02T21:00:00.000Z",
+      startsAt: "2027-01-02T00:00:00.000Z",
+      endsAt: "2027-01-02T23:59:59.999Z",
     };
 
     it("requires a valid initial session", () => {
-      expect(createPlatformEventSchema.safeParse({ name: "Evento central", ...session }).success).toBe(true);
+      expect(createPlatformEventSchema.safeParse({ name: "Evento central", venue, ...session }).success).toBe(true);
       expect(createPlatformEventSchema.safeParse({
         name: "Evento central",
+        venue,
         startsAt: session.endsAt,
         endsAt: session.startsAt,
       }).success).toBe(false);
+      expect(createPlatformEventSchema.safeParse({ name: "Evento central", ...session }).success).toBe(false);
     });
   });
 

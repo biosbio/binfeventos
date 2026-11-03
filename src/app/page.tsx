@@ -100,10 +100,8 @@ export default async function HomePage() {
                     <div className="event-meta">
                       <span>
                         {new Intl.DateTimeFormat("pt-PT", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
+                          dateStyle: "medium",
+                          timeZone: "UTC",
                         }).format(e.startsAt)}
                       </span>
                       {e.city ? <span>{e.city}</span> : null}

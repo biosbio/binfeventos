@@ -10,7 +10,14 @@ import {
 import { writeAudit, sanitizeForAudit } from "@/shared/audit";
 import { type AuthContext } from "@/shared/auth";
 import { canTransition, transitionLabel } from "./state-machine";
-import type { CreateEventInput, SessionInput, VenueInput } from "./schemas";
+import type {
+  CreateEventInput,
+  CreateOrganizerEventInput,
+  CreatePlatformEventInput,
+  SessionInput,
+  UpdateEventInput,
+  VenueInput,
+} from "./schemas";
 
 // ============================================================
 // Módulo events — lógica de negócio.
@@ -41,7 +48,7 @@ async function scopedEvent(ctx: AuthContext, eventId: string) {
 }
 
 /** Criar evento (começa sempre em DRAFT). */
-export async function createEvent(ctx: AuthContext, input: CreateEventInput) {
+export async function createEvent(ctx: AuthContext, input: CreateOrganizerEventInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   return createEventForOrganization(ctx, ctx.organizationId, input);
 }
@@ -70,9 +77,17 @@ async function uniqueEventSlug(organizationId: string, input: CreateEventInput):
 async function createEventForOrganization(
   ctx: AuthContext,
   organizationId: string,
-  input: CreateEventInput,
+  input: CreateOrganizerEventInput,
 ) {
   const slug = await uniqueEventSlug(organizationId, input);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  if (input.startsAt.getTime() < today.getTime()) {
+    throw new BusinessRuleError("A data do evento não pode estar no passado.");
+  }
+  if (input.endsAt <= input.startsAt) {
+    throw new BusinessRuleError("O fim do evento deve ser posterior ao início.");
+  }
 
   const event = await prisma.event.create({
     data: {
@@ -86,8 +101,28 @@ async function createEventForOrganization(
       terms: input.terms ?? null,
       responsibleUserId: ctx.userId,
       status: "DRAFT",
+      sessions: {
+        create: {
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          venue: {
+            create: {
+              organizationId,
+              name: input.venue.name,
+              address: input.venue.address ?? null,
+              city: input.venue.city,
+              country: input.venue.country,
+            },
+          },
+        },
+      },
     },
-    select: { id: true, slug: true, status: true },
+    select: {
+      id: true,
+      slug: true,
+      status: true,
+      sessions: { select: { id: true, venueId: true } },
+    },
   });
 
   await writeAudit({
@@ -103,7 +138,7 @@ async function createEventForOrganization(
 /** Criar evento e primeira sessão na organização central BINF EVENTOS. */
 export async function createPlatformEvent(
   ctx: AuthContext,
-  input: CreateEventInput & { startsAt: Date; endsAt: Date },
+  input: CreatePlatformEventInput,
 ) {
   if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("admin:platform");
 
@@ -115,8 +150,13 @@ export async function createPlatformEvent(
 
   const slug = await uniqueEventSlug(organization.id, input);
 
-  if (input.startsAt.getTime() < Date.now() - 3_600_000) {
-    throw new BusinessRuleError("A sessão não pode começar no passado.");
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  if (input.startsAt.getTime() < today.getTime()) {
+    throw new BusinessRuleError("A data do evento não pode estar no passado.");
+  }
+  if (input.endsAt <= input.startsAt) {
+    throw new BusinessRuleError("O fim do evento deve ser posterior ao início.");
   }
 
   const event = await prisma.event.create({
@@ -135,10 +175,24 @@ export async function createPlatformEvent(
         create: {
           startsAt: input.startsAt,
           endsAt: input.endsAt,
+          venue: {
+            create: {
+              organizationId: organization.id,
+              name: input.venue.name,
+              address: input.venue.address ?? null,
+              city: input.venue.city,
+              country: input.venue.country,
+            },
+          },
         },
       },
     },
-    select: { id: true, slug: true, status: true },
+    select: {
+      id: true,
+      slug: true,
+      status: true,
+      sessions: { select: { id: true, venueId: true } },
+    },
   });
 
   await writeAudit({
@@ -155,7 +209,7 @@ export async function createPlatformEvent(
 export async function updateEvent(
   ctx: AuthContext,
   eventId: string,
-  input: Partial<CreateEventInput>
+  input: UpdateEventInput
 ) {
   const event = await scopedEvent(ctx, eventId);
   if (["CANCELLED", "COMPLETED", "CLOSED"].includes(event.status)) {
@@ -170,17 +224,116 @@ export async function updateEvent(
     if (slugTaken) throw new ConflictError("Slug já utilizado nesta organização.");
   }
 
-  await prisma.event.update({
-    where: { id: event.id },
-    data: {
-      ...(input.name !== undefined && { name: input.name }),
-      ...(input.slug !== undefined && { slug: input.slug }),
-      ...(input.description !== undefined && { description: input.description ?? null }),
-      ...(input.category !== undefined && { category: input.category }),
-      ...(input.coverImageUrl !== undefined && { coverImageUrl: input.coverImageUrl ?? null }),
-      ...(input.entryRules !== undefined && { entryRules: input.entryRules ?? null }),
-      ...(input.terms !== undefined && { terms: input.terms ?? null }),
-    },
+  if (input.startsAt && input.startsAt.getTime() < new Date().setUTCHours(0, 0, 0, 0)) {
+    throw new BusinessRuleError("A data do evento não pode estar no passado.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.event.update({
+      where: { id: event.id },
+      data: {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.slug !== undefined && { slug: input.slug }),
+        ...(input.description !== undefined && { description: input.description ?? null }),
+        ...(input.category !== undefined && { category: input.category }),
+        ...(input.coverImageUrl !== undefined && { coverImageUrl: input.coverImageUrl ?? null }),
+        ...(input.entryRules !== undefined && { entryRules: input.entryRules ?? null }),
+        ...(input.terms !== undefined && { terms: input.terms ?? null }),
+      },
+    });
+
+    if ((input.startsAt && input.endsAt) || input.venue) {
+      const sessions = await tx.eventSession.findMany({
+        where: { eventId: event.id },
+        orderBy: { startsAt: "asc" },
+        include: {
+          venue: true,
+          _count: {
+            select: {
+              inventory: true,
+              holds: true,
+              orders: true,
+              tickets: true,
+              seatMaps: true,
+            },
+          },
+        },
+      });
+
+      const primarySession = sessions[0];
+      const datesChanged = Boolean(
+        input.startsAt &&
+        input.endsAt &&
+        (sessions.length !== 1 ||
+          primarySession?.startsAt.getTime() !== input.startsAt.getTime() ||
+          primarySession?.endsAt.getTime() !== input.endsAt.getTime()),
+      );
+      const venueChanged = Boolean(
+        input.venue &&
+        (!primarySession?.venue ||
+          primarySession.venue.name !== input.venue.name ||
+          primarySession.venue.address !== (input.venue.address ?? null) ||
+          primarySession.venue.city !== input.venue.city ||
+          primarySession.venue.country !== input.venue.country),
+      );
+      if (
+        (datesChanged || venueChanged) &&
+        sessions.some((session) => Object.values(session._count).some((count) => count > 0))
+      ) {
+        throw new BusinessRuleError(
+          "Não é possível alterar datas ou local depois de configurar inventário, reservas ou vendas.",
+        );
+      }
+
+      if (primarySession) {
+        await tx.eventSession.update({
+          where: { id: primarySession.id },
+          data: {
+            ...(datesChanged && input.startsAt && input.endsAt && {
+              startsAt: input.startsAt,
+              endsAt: input.endsAt,
+            }),
+            ...(venueChanged && input.venue && {
+              venue: {
+                create: {
+                  organizationId: event.organizationId,
+                  name: input.venue.name,
+                  address: input.venue.address ?? null,
+                  city: input.venue.city,
+                  country: input.venue.country,
+                },
+              },
+            }),
+          },
+        });
+        if (datesChanged && sessions.length > 1) {
+          await tx.eventSession.deleteMany({
+            where: { eventId: event.id, id: { not: primarySession.id } },
+          });
+        }
+      } else if (input.startsAt && input.endsAt) {
+        await tx.eventSession.create({
+          data: {
+            event: { connect: { id: event.id } },
+            startsAt: input.startsAt,
+            endsAt: input.endsAt,
+            ...(input.venue && {
+              venue: {
+                create: {
+                  organizationId: event.organizationId,
+                  name: input.venue.name,
+                  address: input.venue.address ?? null,
+                  city: input.venue.city,
+                  country: input.venue.country,
+                },
+              },
+            }),
+          },
+        });
+      } else if (input.venue) {
+        throw new BusinessRuleError("Defina as datas do evento antes de indicar o local.");
+      }
+    }
   });
 
   await writeAudit({
@@ -298,7 +451,9 @@ export async function addSession(ctx: AuthContext, input: SessionInput) {
   }
 
   // Sessão não pode começar no passado (tolerância de 1h para criação)
-  if (input.startsAt.getTime() < Date.now() - 3_600_000) {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  if (input.startsAt.getTime() < today.getTime()) {
     throw new BusinessRuleError("A sessão não pode começar no passado.");
   }
 

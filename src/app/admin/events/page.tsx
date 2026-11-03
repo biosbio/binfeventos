@@ -59,9 +59,9 @@ export default async function EventProposalsPage() {
                   <ul>
                     {proposal.sessions.map((session, index) => (
                       <li key={`${session.startsAt.toISOString()}-${index}`}>
-                        {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeStyle: "short" }).format(session.startsAt)}
+                        {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeZone: "UTC" }).format(session.startsAt)}
                         {" — "}
-                        {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeStyle: "short" }).format(session.endsAt)}
+                        {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeZone: "UTC" }).format(session.endsAt)}
                       </li>
                     ))}
                   </ul>

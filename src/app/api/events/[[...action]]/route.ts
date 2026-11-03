@@ -86,7 +86,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     // POST /api/events/create
     if (path === "create") {
       const auth = await requirePermission("event:create");
-      const body = parse((await import("@/modules/events/schemas")).createEventSchema, await req.json());
+      const body = parse((await import("@/modules/events/schemas")).createOrganizerEventSchema, await req.json());
       const { createEvent } = await import("@/modules/events/service");
       const event = await createEvent(auth, body);
       return NextResponse.json({ ok: true, event }, { status: 201 });

@@ -78,8 +78,8 @@ test.describe("Fluxo completo de compra", () => {
       orderId: string; orderNumber: string; totalCents: number; status: string;
     };
     expect(orderData.status).toBe("RESERVED");
-    // Total = 2 × 450000 + 5% taxa = 945000 (server-side)
-    expect(orderData.totalCents).toBe(945_000);
+    // Total = 2 × 500000 + 5% taxa = 1.050.000 (server-side)
+    expect(orderData.totalCents).toBe(1_050_000);
 
     // --- 6. Iniciar pagamento sandbox
     const payment = await request.post("/api/payments/initiate", {

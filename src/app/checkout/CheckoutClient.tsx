@@ -19,6 +19,7 @@ interface AvailabilityItem {
   batchId: string;
   name: string;
   category: string;
+  description: string | null;
   unitPriceCents: number;
   currency: string;
   requiresIdentity: boolean;
@@ -202,6 +203,7 @@ export default function CheckoutClient() {
                       onChange={() => setSelected(i)}
                     />{" "}
                     <strong>{i.name}</strong>
+                    {i.description ? <small>{i.description}</small> : null}
                     <small>
                       {i.available} disponíveis · {i.requiresIdentity ? "identificação obrigatória" : "sem identificação"}
                     </small>

@@ -42,9 +42,47 @@ export const createEventSchema = z.object({
   terms: z.string().trim().max(10000).optional(),
 });
 
-export const updateEventSchema = createEventSchema.partial().refine(
-  (v) => Object.keys(v).length > 0,
-  { message: "Nada para atualizar." }
+const eventVenueSchema = z.object({
+  name: z.string().trim().min(2, "Nome do local obrigatório.").max(150),
+  address: z.string().trim().max(300).optional(),
+  city: z.string().trim().min(2, "Cidade obrigatória.").max(100),
+  country: z.string().trim().length(2, "Código ISO do país.").default("AO"),
+});
+
+const calendarStartSchema = z.coerce.date().refine(
+  (date) => date.getUTCHours() === 0 && date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0,
+  "A data de início deve ser informada sem hora.",
+);
+
+const calendarEndSchema = z.coerce.date().refine(
+  (date) => date.getUTCHours() === 23 && date.getUTCMinutes() === 59 &&
+    date.getUTCSeconds() === 59 && date.getUTCMilliseconds() === 999,
+  "A data de fim deve ser informada sem hora.",
+);
+
+export const createOrganizerEventSchema = createEventSchema.extend({
+  venue: eventVenueSchema,
+  startsAt: calendarStartSchema,
+  endsAt: calendarEndSchema,
+}).refine(
+  (event) => event.endsAt > event.startsAt,
+  { message: "O fim do evento deve ser posterior ao início.", path: ["endsAt"] },
+);
+
+export const updateEventSchema = createEventSchema.partial().extend({
+  venue: eventVenueSchema.optional(),
+  startsAt: calendarStartSchema.optional(),
+  endsAt: calendarEndSchema.optional(),
+}).refine(
+  (event) => Boolean(event.startsAt) === Boolean(event.endsAt),
+  { message: "Informe a data de início e a data de fim.", path: ["endsAt"] },
+).refine(
+  (event) => !event.startsAt || !event.endsAt || event.endsAt > event.startsAt,
+  { message: "O fim do evento deve ser posterior ao início.", path: ["endsAt"] },
+).refine(
+  (event) => Object.keys(event).length > 0,
+  { message: "Nada para atualizar." },
 );
 
 export const sessionSchema = z.object({
@@ -60,8 +98,9 @@ export const sessionSchema = z.object({
 });
 
 export const createPlatformEventSchema = createEventSchema.extend({
-  startsAt: z.coerce.date(),
-  endsAt: z.coerce.date(),
+  venue: eventVenueSchema,
+  startsAt: calendarStartSchema,
+  endsAt: calendarEndSchema,
 }).refine((v) => v.endsAt > v.startsAt, {
   message: "endsAt deve ser posterior a startsAt.",
   path: ["endsAt"],
@@ -79,5 +118,8 @@ export const venueSchema = z.object({
 export const eventIdSchema = z.object({ eventId: z.string().uuid() });
 
 export type CreateEventInput = z.infer<typeof createEventSchema>;
+export type CreateOrganizerEventInput = z.infer<typeof createOrganizerEventSchema>;
+export type CreatePlatformEventInput = z.infer<typeof createPlatformEventSchema>;
+export type UpdateEventInput = z.infer<typeof updateEventSchema>;
 export type SessionInput = z.infer<typeof sessionSchema>;
 export type VenueInput = z.infer<typeof venueSchema>;

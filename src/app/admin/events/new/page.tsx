@@ -1,5 +1,6 @@
 import Link from "next/link";
 import PlatformEventForm from "./platform-event-form";
+import { getCountryOptions } from "@/shared/lib/locale-options";
 
 export default function NewPlatformEventPage() {
   return (
@@ -14,7 +15,7 @@ export default function NewPlatformEventPage() {
           <Link className="button button-secondary" href="/admin">Voltar à administração</Link>
         </div>
       </div>
-      <PlatformEventForm />
+      <PlatformEventForm countryOptions={getCountryOptions()} />
     </main>
   );
 }

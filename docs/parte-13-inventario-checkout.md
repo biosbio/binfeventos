@@ -23,7 +23,24 @@
 | `src/modules/sales/service.ts` | Motor de encomendas: cálculo server-side, OrderStatus, canal |
 | `src/app/api/marketplace/[[...action]]/route.ts` | Disponibilidade, holds, checkout, consulta, cancelamento |
 | `src/app/api/catalog/[[...action]]/route.ts` | Tipos, lotes, job de expiração |
+| `src/app/painel/eventos/[id]/ticket-inventory-manager.tsx` | Ecrã do organizador para criar tipos personalizados, definir quantidade e encerrar vendas |
 | `tests/inventory-sales-schemas.test.ts` | Testes: cliente não pode injetar valores monetários |
+
+### Configuração pelo organizador
+
+Na gestão de cada evento, o organizador pode criar tipos de bilhete com nome,
+categoria, descrição/condições, preço e exigência de identificação. Nomes e
+descrições personalizadas permitem explicar entradas gratuitas, VIP, mesas,
+combos e bilhetes infantis. Cada tipo tem preço, quantidade e limite por
+comprador. A data do evento é definida na criação, como um dia ou vários dias;
+tipos criados na gestão ficam ativos sem datas de lote até o organizador
+terminar as vendas. O início das vendas depende da publicação do evento. Os
+preços e moedas são determinados no servidor a partir da organização.
+
+O detalhe público mostra as condições do tipo; a compra só é habilitada quando
+há um lote aberto e inventário disponível. O checkout apresenta o preço
+efetivo. Cupons e reserva de lugares/mesas numerados não fazem parte deste
+fluxo de catálogo.
 
 ## Núcleo de inventário (Domínio 3)
 
@@ -34,7 +51,7 @@ TRANSATÇÃO:
   SELECT ... FOR UPDATE na linha de ticket_inventory
   → disponibilidade = total − reservado − vendido (dentro do lock)
   → valida limite por comprador (maxPerBuyer, no servidor)
-  → valida janela do lote (OPEN, dentro de startsAt/endsAt)
+  → valida estado do lote (OPEN)
   → incrementa reservedQuantity
   → cria InventoryHold com expiresAt = agora + 10min (servidor)
 ```

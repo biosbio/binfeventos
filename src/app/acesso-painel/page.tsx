@@ -13,7 +13,7 @@ export default async function PanelAuthPage({
   const ctx = await getAuthContext();
   if (!ctx) redirect("/login?next=%2Fpainel");
   if (ctx.platformRole !== "PLATFORM_ADMIN" && (!ctx.organizationId || ctx.permissions.size === 0)) {
-    redirect("/minha-conta?aviso=criar-evento");
+    redirect("/organizador");
   }
   if (ctx.panelVerifiedUntil && ctx.panelVerifiedUntil.getTime() > Date.now()) {
     const destination = ctx.platformRole === "PLATFORM_ADMIN"

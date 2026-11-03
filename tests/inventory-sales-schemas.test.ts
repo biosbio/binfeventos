@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { holdRequestSchema, createBatchSchema } from "../src/modules/inventory/schemas";
+import {
+  createBatchSchema,
+  createTicketTypeSchema,
+  holdRequestSchema,
+  updateTicketTypeQuantitySchema,
+} from "../src/modules/inventory/schemas";
 import { createOrderSchema } from "../src/modules/sales/schemas";
 
 // Testes de caracterização: o cliente NUNCA pode enviar valores monetários
@@ -45,28 +50,51 @@ describe("holdRequestSchema", () => {
 });
 
 describe("createBatchSchema", () => {
-  it("exige janela de comercialização válida", () => {
-    expect(
-      createBatchSchema.safeParse({
-        ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
-        sessionId: "b3f1c0a0-0000-4000-8000-000000000001",
-        name: "Lote 1",
-        quantity: 100,
-        startsAt: "2026-11-01T00:00:00Z",
-        endsAt: "2026-11-10T00:00:00Z",
-      }).success
-    ).toBe(true);
+  it("aceita lotes contínuos sem datas de venda", () => {
+    expect(createBatchSchema.safeParse({
+      ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
+      sessionId: "b3f1c0a0-0000-4000-8000-000000000001",
+      name: "Venda contínua",
+      quantity: 100,
+    }).success).toBe(true);
+  });
 
-    expect(
-      createBatchSchema.safeParse({
-        ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
-        sessionId: "b3f1c0a0-0000-4000-8000-000000000001",
-        name: "Lote 1",
-        quantity: 100,
-        startsAt: "2026-11-10T00:00:00Z",
-        endsAt: "2026-11-01T00:00:00Z",
-      }).success
-    ).toBe(false);
+  it("ignora datas antigas de lote enviadas por clientes desatualizados", () => {
+    const result = createBatchSchema.safeParse({
+      ticketTypeId: "b3f1c0a0-0000-4000-8000-000000000002",
+      sessionId: "b3f1c0a0-0000-4000-8000-000000000001",
+      name: "Lote legado",
+      quantity: 100,
+      startsAt: "2026-11-10",
+      endsAt: "2026-11-10",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("startsAt");
+      expect(result.data).not.toHaveProperty("endsAt");
+    }
+  });
+});
+
+describe("createTicketTypeSchema", () => {
+  const ticketType = {
+    eventId: "b3f1c0a0-0000-4000-8000-000000000001",
+    name: "Entrada geral",
+    basePriceCents: 500000,
+  };
+
+  it("exige a quantidade disponível para ativar a venda", () => {
+    expect(createTicketTypeSchema.safeParse(ticketType).success).toBe(false);
+    expect(createTicketTypeSchema.safeParse({ ...ticketType, quantity: 100 }).success).toBe(true);
+  });
+});
+
+describe("updateTicketTypeQuantitySchema", () => {
+  it("valida quantidade positiva e identificador do tipo", () => {
+    const ticketTypeId = "b3f1c0a0-0000-4000-8000-000000000001";
+    expect(updateTicketTypeQuantitySchema.safeParse({ ticketTypeId, quantity: 100 }).success).toBe(true);
+    expect(updateTicketTypeQuantitySchema.safeParse({ ticketTypeId, quantity: 0 }).success).toBe(false);
+    expect(updateTicketTypeQuantitySchema.safeParse({ ticketTypeId: "invalid", quantity: 100 }).success).toBe(false);
   });
 });
 

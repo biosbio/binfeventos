@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { expect, APIRequestContext } from "@playwright/test";
 import { createHash } from "crypto";
 import { prisma } from "../src/shared/lib/prisma";
 
@@ -79,38 +79,39 @@ export async function organizerBootstrap(
   await verifyOrganizerPanelForE2E(cookie);
   const authHeaders = { cookie, "content-type": "application/json" };
 
-  // Recinto
-  const venue = await org.post("/api/events/venues", {
-    headers: authHeaders,
-    data: { name: `Arena E2E ${Date.now()}`, country: "AO", capacity: 5000 },
-  });
-  expect(venue.ok()).toBeTruthy();
-  const venueId = (await venue.json()).venue.id as string;
-
   // Evento
   const slug = `show-e2e-${Date.now()}`;
+  const eventStartsAt = new Date(Date.now() + 24 * 3600 * 1000);
+  eventStartsAt.setUTCHours(0, 0, 0, 0);
+  const eventEndsAt = new Date(eventStartsAt);
+  eventEndsAt.setUTCHours(23, 59, 59, 999);
   const event = await org.post("/api/events/create", {
     headers: authHeaders,
-    data: { name: "Show E2E", slug, category: "CONCERT" },
-  });
-  expect(event.ok()).toBeTruthy();
-  const eventId = (await event.json()).event.id as string;
-
-  // Sessão futura (amanhã, 20h–23h)
-  const startsAt = new Date(Date.now() + 24 * 3600 * 1000);
-  startsAt.setUTCHours(20, 0, 0, 0);
-  const endsAt = new Date(startsAt.getTime() + 3 * 3600 * 1000);
-  const session = await org.post(`/api/events/${eventId}/sessions`, {
-    headers: authHeaders,
     data: {
-      eventId,
-      venueId,
-      startsAt: startsAt.toISOString(),
-      endsAt: endsAt.toISOString(),
+      name: "Show E2E",
+      slug,
+      category: "CONCERT",
+      venue: {
+        name: `Arena E2E ${Date.now()}`,
+        city: "Luanda",
+        country: "AO",
+      },
+      startsAt: eventStartsAt.toISOString(),
+      endsAt: eventEndsAt.toISOString(),
     },
   });
-  expect(session.ok()).toBeTruthy();
-  const sessionId = (await session.json()).session.id as string;
+  expect(event.ok()).toBeTruthy();
+  const createdEvent = (await event.json()).event as {
+    id: string;
+    sessions: { id: string; venueId: string | null }[];
+  };
+  const eventId = createdEvent.id;
+  const initialSession = createdEvent.sessions[0];
+  if (!initialSession?.venueId) {
+    throw new Error("A sessão inicial não foi criada com o local do evento.");
+  }
+  const sessionId = initialSession.id;
+  const venueId = initialSession.venueId;
 
   // A publicação exige aprovação de administrador; este cenário foca a compra.
   await prisma.event.update({
@@ -126,37 +127,13 @@ export async function organizerBootstrap(
       name: "Entrada Geral",
       category: "NORMAL",
       basePriceCents: 500000, // 5.000,00 AOA
+      quantity: 100,
+      maxPerBuyer: 4,
     },
   });
   expect(tt.ok()).toBeTruthy();
   const ticketTypeId = (await tt.json()).ticketType.id as string;
-
-  // Lote com janela de comercialização ativa
-  const batchStarts = new Date(Date.now() - 60_000);
-  const batchEnds = new Date(Date.now() + 24 * 3600 * 1000);
-  const batch = await org.post("/api/catalog/batches", {
-    headers: authHeaders,
-    data: {
-      ticketTypeId,
-      sessionId,
-      name: "Lote 1",
-      quantity: 100,
-      priceCents: 450000, // 4.500,00 AOA
-      startsAt: batchStarts.toISOString(),
-      endsAt: batchEnds.toISOString(),
-      maxPerBuyer: 4,
-    },
-  });
-  expect(batch.ok()).toBeTruthy();
-  const batchId = (await batch.json()).batch.id as string;
-
-  // BUG FIX Parte 19: abrir o lote (antes não havia forma)
-  const openBatch = await org.post("/api/catalog/batches/status", {
-    headers: authHeaders,
-    data: { batchId, to: "OPEN" },
-  });
-  expect(openBatch.ok()).toBeTruthy();
-
+  expect(ticketTypeId).toBeTruthy();
   return {
     organizerCookie: cookie,
     organizationId,
