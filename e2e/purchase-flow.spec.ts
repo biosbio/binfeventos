@@ -112,9 +112,9 @@ test.describe("Fluxo completo de compra", () => {
     const confirmed = await request.get(`/api/marketplace/orders/${orderData.orderId}`, {
       headers: buyerHeaders,
     });
-    expect(confirmed.ok()).toBeTruthy();
+    expect(confirmed.ok(), `Consulta da encomenda (${confirmed.status()}): ${await confirmed.text()}`).toBeTruthy();
     const confirmedOrder = (await confirmed.json()).order as {
-      status: string; tickets: { id: string }[];
+      status: string;
     };
     expect(confirmedOrder.status).toBe("CONFIRMED");
 
@@ -129,8 +129,13 @@ test.describe("Fluxo completo de compra", () => {
     await page.goto("/minha-conta");
     await expect(page.getByText(orderData.orderNumber)).toBeVisible();
 
-    // --- 10. Bilhete individual com QR SVG (imagem gerada no servidor)
-    const ticketId = confirmedOrder.tickets[0]!.id;
+    // --- 10. Bilhetes emitidos; QR SVG gerado no servidor
+    const myTickets = await request.get("/api/access/my-tickets", { headers: buyerHeaders });
+    expect(myTickets.ok()).toBeTruthy();
+    const tickets = (await myTickets.json()).tickets as { id: string; status: string }[];
+    expect(tickets).toHaveLength(2);
+    expect(tickets.every((ticket) => ticket.status === "ISSUED")).toBe(true);
+    const ticketId = tickets[0]!.id;
     await page.goto(`/bilhetes/${ticketId}`);
     await expect(page.locator("img[alt='QR Code do bilhete']")).toBeVisible();
 

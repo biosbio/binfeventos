@@ -37,7 +37,9 @@ export async function prepareSettlement(
   // liquidações duplicadas quando dois operadores atuam em simultâneo.
   const result = await prisma.$transaction(async (tx) => {
     const lockKey = `settlement:${ctx.organizationId}`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0)) IS NULL AS locked
+    `;
 
     const existingSettlement = await tx.settlement.findFirst({
       where: {

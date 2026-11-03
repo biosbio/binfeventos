@@ -131,7 +131,9 @@ export async function initiatePayment(ctx: AuthContext, input: InitiatePaymentIn
       }
     }
     const lockKey = `payment-init:${order.id}:${provider.id}`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0)) IS NULL AS locked
+    `;
     let current = await tx.payment.findFirst({
       where: { orderId: order.id, providerId: provider.id },
     });

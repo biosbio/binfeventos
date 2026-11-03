@@ -88,9 +88,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ action?: s
   const { action = [] } = await ctx.params;
 
   try {
-    if (action.length === 1) {
+    if (action.length === 2 && action[0] === "orders") {
       const auth = await requireAuth();
-      const orderId = parse(UUID, action[0]);
+      const orderId = parse(UUID, action[1]);
       const { getOrder } = await import("@/modules/sales/service");
       const order = await getOrder(auth, orderId);
       return NextResponse.json({ ok: true, order });
