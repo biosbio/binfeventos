@@ -1,0 +1,62 @@
+# ============================================================
+# PIPELINE CI — BINF EVENTOS
+#
+# NOTA: o token do conector não tem o âmbito "workflow" do GitHub,
+# que é obrigatório para escrever diretamente em
+# .github/workflows/. Este ficheiro está na raiz por essa razão.
+#
+# ARRANQUE RÁPIDO (1 minuto, via web):
+#   1. Abrir este ficheiro no GitHub → copiar todo o conteúdo
+#      ABAIXO desta nota.
+#   2. Criar .github/workflows/ci.yml e colar.
+#   3. Eliminar este ficheiro da raiz.
+#
+# Pipeline: Postgres 16 → prisma generate → migrate deploy → seed
+# → typecheck → vitest → lint → Playwright chromium → build → E2E.
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: binf_test
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/binf_test?schema=public
+      SANDBOX_WEBHOOK_SECRET: ci-secret-4f7a
+      ADMIN_EMAIL: admin@binf.local
+      ADMIN_PASSWORD: CiAdmin!2026x
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run db:seed
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run lint
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
