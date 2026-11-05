@@ -58,7 +58,19 @@ export async function deliverSms(to: string, code: string, purpose = "acesso ao 
 /** Organizador confirma a password antes de abrir o painel. */
 export async function verifyOrganizerPanelPassword(ctx: AuthContext, password: string): Promise<void> {
   if (ctx.platformRole === "PLATFORM_ADMIN") throw new ForbiddenError("admin-must-use-mfa");
-  if (!ctx.organizationId || ctx.permissions.size === 0) throw new ForbiddenError("organizer-membership-required");
+  if (!ctx.organizationId) throw new ForbiddenError("organizer-membership-required");
+  if (ctx.permissions.size === 0) {
+    const isApprovedEventStaff = await prisma.eventStaffMembership.findFirst({
+      where: {
+        userId: ctx.userId,
+        role: { in: ["SELLER", "GATE"] },
+        approvedAt: { not: null },
+        event: { organizationId: ctx.organizationId, organization: { status: "ACTIVE" } },
+      },
+      select: { id: true },
+    });
+    if (!isApprovedEventStaff) throw new ForbiddenError("organizer-membership-required");
+  }
   if (await rateLimit(`panel-organizer-password:${ctx.userId}`, 5, 15 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde quinze minutos.");
   }

@@ -10,6 +10,7 @@ node_modules/
 .next/
 dist/
 build/
+tsconfig.tsbuildinfo
 public/uploads/event-covers/
 
 # Prisma gerado
@@ -29,3 +30,4 @@ Thumbs.db
 
 # Credenciais locais geradas pelo Dev Container
 .devcontainer/LOCAL-ADMIN-CREDENTIALS.txt
+.neon

@@ -5,6 +5,7 @@ import { getAuthContext } from "@/shared/auth";
 export default async function OrganizerLandingPage() {
   const auth = await getAuthContext();
   const isAdmin = auth?.platformRole === "PLATFORM_ADMIN";
+  const canInviteSellers = Boolean(auth?.organizationId && auth.permissions.has("org:invite"));
   const destination = isAdmin ? "/admin/events/new" : "/painel/eventos/novo";
   const next = encodeURIComponent("/painel/eventos/novo");
   const primaryHref = auth ? destination : `/register?next=${next}`;
@@ -29,6 +30,11 @@ export default async function OrganizerLandingPage() {
                 <Link className="button button-secondary" href={secondaryHref}>
                   {auth ? (isAdmin ? "Voltar à administração" : "Abrir painel") : "Já tenho conta"}
                 </Link>
+                {canInviteSellers ? (
+                  <Link className="button button-secondary" href="/painel/vendedores">
+                    Convidar vendedores
+                  </Link>
+                ) : null}
               </div>
             </div>
             <div className="organizer-journey-card">

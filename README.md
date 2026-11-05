@@ -61,12 +61,24 @@ gerada no servidor. Chaves de prestadores (EMIS/Multicaixa) vivem em
 
 ## Como executar localmente
 
+O PostgreSQL pode ficar num serviço hospedado, como Neon. Nesse caso, não é
+necessário instalar ou iniciar Docker para usar o banco: configure a URL de
+conexão pooled em `DATABASE_URL` no `.env` local para o app, e a URL direta em
+`DATABASE_URL_UNPOOLED` para migrations do Prisma. O `neon deploy` pode puxar
+essas variáveis para o `.env`. Não versione URLs ou credenciais. O restante do
+fluxo de desenvolvimento continua igual.
+
+Para usar o banco Neon já configurado noutro computador, configure as duas
+URLs no `.env` local e execute `npm ci` e `npm run dev`. O schema e os dados já
+foram preparados nesse banco; não execute `npm run prisma:migrate` nem
+`npm run db:seed` contra a branch compartilhada.
+
 ```bash
 npm ci                   # instalação reproduzível a partir do package-lock.json
-cp .env.example .env      # preencher DATABASE_URL e gerar os segredos
+cp .env.example .env      # preencher as URLs do PostgreSQL e gerar os segredos
 npm run prisma:generate
-npm run prisma:migrate   # desenvolvimento; cria/aplica migrations pendentes
-npm run db:seed
+npm run prisma:migrate   # apenas num banco local/de teste descartável
+npm run db:seed          # apenas num banco local/de teste descartável
 npm run dev
 npm run test             # testes unitários/de caracterização (Vitest)
 

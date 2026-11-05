@@ -7,6 +7,7 @@ import { getCountryOptions } from "@/shared/lib/locale-options";
 import { SiteFooter, SiteHeader } from "../../../_components/site-shell";
 import EditEventForm from "./edit-form";
 import TicketInventoryManager from "./ticket-inventory-manager";
+import EventStaffManager from "./event-staff-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,21 @@ export default async function ManageEventPage({
         },
         orderBy: { createdAt: "asc" },
       },
+      staffMembers: {
+        select: {
+          id: true,
+          role: true,
+          invitedAt: true,
+          approvedAt: true,
+          user: { select: { fullName: true, email: true, status: true } },
+        },
+        orderBy: { invitedAt: "desc" },
+      },
+      staffInvites: {
+        where: { revokedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true, role: true, createdAt: true, expiresAt: true },
+        orderBy: { createdAt: "desc" },
+      },
     },
   });
   if (!event) notFound();
@@ -97,6 +113,11 @@ export default async function ManageEventPage({
           sessions={event.sessions}
           ticketTypes={event.ticketTypes}
           currency={event.organization.currency}
+        />
+        <EventStaffManager
+          eventId={event.id}
+          members={event.staffMembers}
+          invites={event.staffInvites}
         />
         <p className="auth-switch"><Link href="/painel">Voltar aos meus eventos</Link></p>
       </main>

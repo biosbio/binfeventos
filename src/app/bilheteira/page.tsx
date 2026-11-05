@@ -10,41 +10,75 @@ export const dynamic = "force-dynamic";
 export default async function BoxOfficePage() {
   const auth = await getAuthContext();
   if (!auth) redirect("/login?next=%2Fbilheteira");
-  if (!auth.organizationId || !auth.permissions.has("boxoffice:sell")) redirect("/painel");
+  if (!auth.organizationId) redirect("/painel");
+  const eventStaffOnly = !auth.permissions.has("boxoffice:sell");
+  const eventStaff = eventStaffOnly
+    ? await prisma.eventStaffMembership.findMany({
+        where: {
+          userId: auth.userId,
+          role: "SELLER",
+          approvedAt: { not: null },
+          event: {
+            organizationId: auth.organizationId,
+            organization: { status: "ACTIVE" },
+          },
+        },
+        select: {
+          eventId: true,
+          event: { select: { sessions: { select: { venueId: true } } } },
+        },
+      })
+    : [];
+  if (eventStaffOnly && eventStaff.length === 0) redirect("/painel");
   if (!auth.panelVerifiedUntil || auth.panelVerifiedUntil <= new Date()) {
     redirect("/acesso-painel?next=%2Fbilheteira");
   }
   await assertOrgActive(auth.organizationId);
 
   const now = new Date();
+  const eventIds = eventStaff.map((staff) => staff.eventId);
+  const venueIds = [...new Set(eventStaff.flatMap((staff) =>
+    staff.event.sessions.flatMap((session) => session.venueId ? [session.venueId] : []),
+  ))];
   const [organization, stations, shift, sessions] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: auth.organizationId },
       select: { currency: true },
     }),
     prisma.boxOfficeStation.findMany({
-      where: { organizationId: auth.organizationId, status: "ACTIVE" },
-      select: { code: true, name: true },
+      where: {
+        organizationId: auth.organizationId,
+        status: "ACTIVE",
+        ...(eventStaffOnly ? { venueId: { in: venueIds } } : {}),
+      },
+      select: { code: true, name: true, venueId: true },
       orderBy: { name: "asc" },
     }),
     prisma.cashShift.findFirst({
       where: {
         organizationId: auth.organizationId,
+        ...(eventStaffOnly ? { eventId: { in: eventIds } } : {}),
         operatorUserId: auth.userId,
         status: "OPEN",
       },
       select: {
         id: true,
+        eventId: true,
         station: { select: { code: true, name: true } },
       },
     }),
     prisma.eventSession.findMany({
       where: {
         endsAt: { gt: now },
-        event: { organizationId: auth.organizationId, status: "PUBLISHED" },
+        event: {
+          organizationId: auth.organizationId,
+          status: "PUBLISHED",
+          ...(eventStaffOnly ? { id: { in: eventIds } } : {}),
+        },
       },
       select: {
         id: true,
+        eventId: true,
         startsAt: true,
         event: { select: { name: true } },
         inventory: {
@@ -72,6 +106,7 @@ export default async function BoxOfficePage() {
 
   const events = sessions.map((session) => ({
     id: session.id,
+    eventId: session.eventId,
     name: session.event.name,
     startsAt: session.startsAt.toISOString(),
     tickets: session.inventory
@@ -89,6 +124,15 @@ export default async function BoxOfficePage() {
       }))
       .filter((ticket) => ticket.available > 0),
   })).filter((session) => session.tickets.length > 0);
+  const cashierStations = stations.map((station) => ({
+    code: station.code,
+    name: station.name,
+    eventIds: eventStaffOnly
+      ? eventStaff
+          .filter((staff) => staff.event.sessions.some((session) => session.venueId === station.venueId))
+          .map((staff) => staff.eventId)
+      : [],
+  }));
 
   return (
     <>
@@ -102,9 +146,10 @@ export default async function BoxOfficePage() {
         </p>
         <CashierClient
           currency={organization?.currency ?? "AOA"}
-          stations={stations}
+          stations={cashierStations}
           activeShift={shift}
           sessions={events}
+          eventStaffOnly={eventStaffOnly}
         />
       </main>
       <SiteFooter />

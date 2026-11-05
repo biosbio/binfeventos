@@ -6,6 +6,7 @@ import { z } from "zod";
 
 export const openShiftSchema = z.object({
   stationCode: z.string().trim().min(2).max(40),
+  eventId: z.string().uuid().optional(),
   openingFloatCents: z.number().int().min(0).max(10_000_000),
 });
 

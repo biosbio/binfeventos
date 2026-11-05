@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { errorResponse, ValidationError, ForbiddenError, NotFoundError } from "@/shared/errors";
-import { requireAuth, requirePermission } from "@/shared/auth";
+import { requirePanelAuth, requireAuth, requirePermission } from "@/shared/auth";
 
 // ============================================================
 // Módulo access — rotas API
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
   try {
     if (path === "validate") {
-      const auth = await requirePermission("access:validate");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/access/schemas")).validateQrSchema, await req.json());
       const { validateEntry } = await import("@/modules/access/service");
       const result = await validateEntry(auth, body);

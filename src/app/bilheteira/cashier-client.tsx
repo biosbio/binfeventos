@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Station = { code: string; name: string };
-type Shift = { id: string; station: Station } | null;
+type Station = { code: string; name: string; eventIds?: string[] };
+type Shift = { id: string; eventId: string | null; station: Station } | null;
 type Ticket = {
   ticketTypeId: string;
   batchId: string;
@@ -14,7 +14,7 @@ type Ticket = {
   unitPriceCents: number;
   available: number;
 };
-type Session = { id: string; name: string; startsAt: string; tickets: Ticket[] };
+type Session = { id: string; eventId: string; name: string; startsAt: string; tickets: Ticket[] };
 type Attendee = { fullName: string; documentType: string; documentNumber: string };
 
 export default function CashierClient({
@@ -22,15 +22,27 @@ export default function CashierClient({
   stations,
   activeShift,
   sessions,
+  eventStaffOnly,
 }: {
   currency: string;
   stations: Station[];
   activeShift: Shift;
   sessions: Session[];
+  eventStaffOnly: boolean;
 }) {
   const router = useRouter();
-  const [stationCode, setStationCode] = useState(activeShift?.station.code ?? stations[0]?.code ?? "");
+  const selectableSessions = eventStaffOnly
+    ? sessions.filter((item) => stations.some((station) => station.eventIds?.includes(item.eventId)))
+    : sessions;
+  const initialEventId = activeShift?.eventId ?? selectableSessions[0]?.eventId ?? sessions[0]?.eventId ?? "";
+  const [eventId, setEventId] = useState(initialEventId);
+  const initialStation = activeShift?.station.code ?? stations.find((station) =>
+    !eventStaffOnly || station.eventIds?.includes(initialEventId),
+  )?.code ?? "";
+  const [stationCode, setStationCode] = useState(initialStation);
   const [openingFloat, setOpeningFloat] = useState("0");
+  const [countedCash, setCountedCash] = useState("");
+  const [differenceNotes, setDifferenceNotes] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [ticketKey, setTicketKey] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -43,7 +55,13 @@ export default function CashierClient({
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const session = sessions.find((item) => item.id === sessionId);
+  const availableStations = eventStaffOnly
+    ? stations.filter((station) => station.eventIds?.includes(eventId))
+    : stations;
+  const availableSessions = activeShift?.eventId
+    ? sessions.filter((item) => item.eventId === activeShift.eventId)
+    : sessions;
+  const session = availableSessions.find((item) => item.id === sessionId);
   const tickets = session?.tickets ?? [];
   const ticket = tickets.find((item) => `${item.ticketTypeId}:${item.batchId}` === ticketKey);
   const amount = ticket ? ticket.unitPriceCents * quantity : 0;
@@ -80,6 +98,7 @@ export default function CashierClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           stationCode,
+          eventId: eventStaffOnly ? eventId : undefined,
           openingFloatCents: Math.round(Number(openingFloat) * 100),
         }),
       });
@@ -167,22 +186,70 @@ export default function CashierClient({
     }
   }
 
+  async function closeShift(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activeShift) return;
+    setError("");
+    setSuccess("");
+    setBusy(true);
+    try {
+      const response = await fetch("/api/boxoffice/shifts/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shiftId: activeShift.id,
+          countedCents: Math.round(Number(countedCash) * 100),
+          differenceNotes: differenceNotes.trim() || "Sem diferenças identificadas.",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.message ?? "Não foi possível fechar o turno.");
+        return;
+      }
+      setSuccess("Turno fechado e caixa registado.");
+      router.refresh();
+    } catch {
+      setError("Erro de rede ao fechar o turno.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!activeShift) {
     return (
       <section className="cashier-card">
         <h2>Abrir turno de caixa</h2>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        {stations.length === 0 ? (
+        {availableStations.length === 0 ? (
           <p className="form-help">
-            Não há postos de bilheteira ativos nesta organização. Peça ao administrador
+            Não há postos de bilheteira ativos associados ao local deste evento. Peça ao organizador
             para configurar um posto antes de iniciar vendas.
           </p>
         ) : (
           <form onSubmit={openShift}>
+            {eventStaffOnly ? (
+              <label className="cashier-field">
+                <span>Evento</span>
+                <select
+                  value={eventId}
+                  onChange={(event) => {
+                    const nextEventId = event.target.value;
+                    setEventId(nextEventId);
+                    setStationCode(stations.find((station) => station.eventIds?.includes(nextEventId))?.code ?? "");
+                  }}
+                  required
+                >
+                  {Array.from(new Map(selectableSessions.map((item) => [item.eventId, item.name])).entries()).map(([id, name]) => (
+                    <option key={id} value={id}>{name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="cashier-field">
               <span>Posto de venda</span>
               <select value={stationCode} onChange={(event) => setStationCode(event.target.value)} required>
-                {stations.map((station) => (
+                {availableStations.map((station) => (
                   <option key={station.code} value={station.code}>{station.name}</option>
                 ))}
               </select>
@@ -217,7 +284,7 @@ export default function CashierClient({
         </div>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         {success ? <p className="form-success" role="status">{success}</p> : null}
-        {sessions.length === 0 ? (
+        {availableSessions.length === 0 ? (
           <p className="form-help">Não há bilhetes disponíveis para venda presencial neste momento.</p>
         ) : (
           <form className="cashier-form" onSubmit={sellForCash}>
@@ -226,7 +293,7 @@ export default function CashierClient({
               <span>Evento e sessão</span>
               <select value={sessionId} onChange={(event) => chooseSession(event.target.value)} required>
                 <option value="">Selecione o evento</option>
-                {sessions.map((item) => (
+                {availableSessions.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name} · {new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(item.startsAt))}
                   </option>
@@ -333,6 +400,27 @@ export default function CashierClient({
             </button>
           </form>
         )}
+        <form className="cashier-form" onSubmit={closeShift}>
+          <h2>Fechar turno</h2>
+          <label className="cashier-field">
+            <span>Dinheiro contado ({currency})</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={countedCash}
+              onChange={(event) => setCountedCash(event.target.value)}
+              required
+            />
+          </label>
+          <label className="cashier-field">
+            <span>Notas sobre diferenças</span>
+            <input value={differenceNotes} onChange={(event) => setDifferenceNotes(event.target.value)} />
+          </label>
+          <button className="button button-secondary" type="submit" disabled={busy}>
+            {busy ? "A fechar…" : "Fechar turno"}
+          </button>
+        </form>
       </section>
       <aside className="cashier-help">
         <span className="cashier-cash-icon" aria-hidden="true">$</span>

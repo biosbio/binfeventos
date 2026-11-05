@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
-import { requirePermission } from "@/shared/auth";
+import { requirePanelAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
   try {
     if (path === "shifts/open") {
-      const auth = await requirePermission("shift:open");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/boxoffice/schemas")).openShiftSchema, await req.json());
       const { openShift } = await import("@/modules/boxoffice/service");
       const shift = await openShift(auth, body);
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "shifts/close") {
-      const auth = await requirePermission("shift:close");
+      const auth = await requirePanelAuth();
       const raw = await req.json();
       // Notas obrigatórias quando há diferença: validação dupla (servidor)
       const body = parse((await import("@/modules/boxoffice/schemas")).closeShiftSchema, raw);
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "sale") {
-      const auth = await requirePermission("boxoffice:sell");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/boxoffice/schemas")).boxOfficeSaleSchema, await req.json());
       const { boxOfficeSale } = await import("@/modules/boxoffice/service");
       const order = await boxOfficeSale(auth, body);

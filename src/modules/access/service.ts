@@ -8,8 +8,9 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import type { AuthContext } from "@/shared/auth";
+import { hasApprovedEventStaffRole } from "@/modules/event-staff/service";
 import type {
   ApproveTransferInput,
   IssueTransferInput,
@@ -434,7 +435,8 @@ export async function decideTransfer(ctx: AuthContext, input: ApproveTransferInp
 export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const organizationId = ctx.organizationId;
-  if (!ctx.permissions.has("access:validate")) throw new ForbiddenError("access:validate");
+  await assertOrgActive(organizationId);
+  const canValidateOrganizationWide = ctx.permissions.has("access:validate");
 
   const gate = await prisma.accessGate.findUnique({
     where: { organizationId_code: { organizationId, code: input.gateCode } },
@@ -445,7 +447,7 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
   const ticket = await prisma.ticket.findUnique({
     where: { qrSecretHash: qrHash },
     include: {
-      session: { select: { id: true, startsAt: true, endsAt: true, doorsOpenAt: true } },
+      session: { select: { id: true, eventId: true, startsAt: true, endsAt: true, doorsOpenAt: true } },
       orderAttendee: { select: { fullName: true } },
       order: { select: { status: true } },
     },
@@ -468,6 +470,17 @@ export async function validateEntry(ctx: AuthContext, input: ValidateQrInput) {
     });
     return { allowed: false, reason };
   };
+
+  if (!canValidateOrganizationWide) {
+    if (
+      !ticket ||
+      ticket.organizationId !== organizationId ||
+      gate.sessionId !== ticket.session.id ||
+      !(await hasApprovedEventStaffRole(ctx, ticket.session.eventId, "GATE"))
+    ) {
+      throw new ForbiddenError("access:validate");
+    }
+  }
 
   if (!ticket) return deny("INVALID_QR");
   if (ticket.organizationId !== ctx.organizationId) return deny("INVALID_QR");

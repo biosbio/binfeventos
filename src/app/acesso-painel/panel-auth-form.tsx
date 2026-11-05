@@ -29,10 +29,10 @@ export default function PanelAuthForm({ isAdmin, nextPath }: { isAdmin: boolean;
     <main className="auth-wrap">
       <section className="auth-card">
         <span className="brand"><BrandLogo /></span>
-        <h1>{isAdmin ? "Confirmar acesso administrativo" : "Validar acesso do organizador"}</h1>
+        <h1>{isAdmin ? "Confirmar acesso administrativo" : "Confirmar acesso à organização ou ao evento"}</h1>
         <p>{isAdmin
           ? "Por segurança, confirme novamente a sua password e o código da aplicação autenticadora."
-          : "Confirme a sua password para abrir o painel e gerir os eventos da sua organização."}</p>
+          : "Confirme a sua password para aceder ao painel ou às ferramentas autorizadas para o seu evento."}</p>
         {error ? <div className="form-error" role="alert">{error}</div> : null}
         <form onSubmit={verify}>
           <div className="form-field"><label htmlFor="panel-password">Password</label><input id="panel-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></div>
@@ -41,7 +41,7 @@ export default function PanelAuthForm({ isAdmin, nextPath }: { isAdmin: boolean;
             <div className="form-field"><label htmlFor="panel-totp">Código MFA (TOTP)</label><input id="panel-totp" inputMode="numeric" pattern="\d{6}" maxLength={6} required value={totpCode} onChange={e => setTotpCode(e.target.value.replace(/\D/g, "").slice(0,6))} /></div>
             </>
           ) : null}
-          <button className="button button-primary" disabled={busy}>{busy ? "A validar…" : isAdmin ? "Confirmar e abrir administração" : "Confirmar e abrir painel"}</button>
+          <button className="button button-primary" disabled={busy}>{busy ? "A validar…" : isAdmin ? "Confirmar e abrir administração" : "Confirmar e continuar"}</button>
         </form>
         <p className="auth-switch"><Link href="/">Voltar à área pública</Link></p>
       </section>

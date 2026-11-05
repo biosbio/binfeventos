@@ -86,6 +86,8 @@ model User {
 
   memberships OrgMembership[]
   createdBoxOfficeSellerInvites BoxOfficeSellerInvite[] @relation("BoxOfficeSellerInviteCreator")
+  createdEventStaffInvites EventStaffInvite[] @relation("EventStaffInviteCreator")
+  eventStaffMemberships EventStaffMembership[]
   sessions    Session[]
   panelVerificationCodes PanelVerificationCode[]
   passwordResetCodes PasswordResetCode[]
@@ -273,6 +275,11 @@ model Venue {
   @@map("venues")
 }
 
+enum EventStaffRole {
+  SELLER
+  GATE
+}
+
 model Event {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @db.Uuid
@@ -292,9 +299,48 @@ model Event {
   organization Organization   @relation(fields: [organizationId], references: [id])
   sessions     EventSession[]
   ticketTypes  TicketType[]
+  staffInvites EventStaffInvite[]
+  staffMembers EventStaffMembership[]
+  cashShifts   CashShift[]
 
   @@unique([organizationId, slug])
   @@map("events")
+}
+
+model EventStaffInvite {
+  id              String         @id @default(uuid()) @db.Uuid
+  eventId         String         @db.Uuid
+  createdByUserId String         @db.Uuid
+  role            EventStaffRole
+  tokenHash       String         @unique
+  createdAt       DateTime       @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+
+  event     Event @relation(fields: [eventId], references: [id])
+  createdBy User  @relation("EventStaffInviteCreator", fields: [createdByUserId], references: [id])
+  members   EventStaffMembership[]
+
+  @@index([eventId, expiresAt])
+  @@map("event_staff_invites")
+}
+
+model EventStaffMembership {
+  id         String         @id @default(uuid()) @db.Uuid
+  eventId    String         @db.Uuid
+  userId     String         @db.Uuid
+  inviteId   String?        @db.Uuid
+  role       EventStaffRole
+  invitedAt  DateTime       @default(now())
+  approvedAt DateTime?
+
+  event  Event             @relation(fields: [eventId], references: [id])
+  user   User              @relation(fields: [userId], references: [id])
+  invite EventStaffInvite? @relation(fields: [inviteId], references: [id])
+
+  @@unique([eventId, userId])
+  @@index([eventId, role, approvedAt])
+  @@map("event_staff_memberships")
 }
 
 model EventSession {
@@ -880,6 +926,7 @@ enum ShiftStatus {
 model CashShift {
   id              String     @id @default(uuid()) @db.Uuid
   organizationId  String     @db.Uuid
+  eventId         String?    @db.Uuid
   stationId       String     @db.Uuid
   operatorUserId  String     @db.Uuid
   status          ShiftStatus @default(OPEN)
@@ -898,6 +945,7 @@ model CashShift {
   updatedAt       DateTime  @updatedAt
 
   organization Organization     @relation(fields: [organizationId], references: [id])
+  event        Event?           @relation(fields: [eventId], references: [id])
   station      BoxOfficeStation @relation(fields: [stationId], references: [id])
   operator     User             @relation(fields: [operatorUserId], references: [id])
   orders       Order[]
@@ -905,6 +953,7 @@ model CashShift {
   deposits     CashDeposit[]
 
   @@index([organizationId, status])
+  @@index([eventId, operatorUserId, status])
   @@map("cash_shifts")
 }
 

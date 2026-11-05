@@ -5,8 +5,9 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/shared/errors";
-import { writeAudit, sanitizeForAudit } from "@/shared/audit";
+import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import type { AuthContext } from "@/shared/auth";
+import { hasApprovedEventStaffRole } from "@/modules/event-staff/service";
 import type { BoxOfficeSaleInput, CloseShiftInput, OpenShiftInput } from "./schemas";
 import type { CreateOrderInput } from "@/modules/sales/schemas";
 
@@ -31,6 +32,7 @@ import type { CreateOrderInput } from "@/modules/sales/schemas";
 /** Escopo: posto da organização do contexto. */
 async function scopedStation(ctx: AuthContext, stationCode: string) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  await assertOrgActive(ctx.organizationId);
   const station = await prisma.boxOfficeStation.findUnique({
     where: { organizationId_code: { organizationId: ctx.organizationId, code: stationCode } },
   });
@@ -42,9 +44,30 @@ async function scopedStation(ctx: AuthContext, stationCode: string) {
 /** Abrir turno: um turno aberto por operador por posto. */
 export async function openShift(ctx: AuthContext, input: OpenShiftInput) {
   const station = await scopedStation(ctx, input.stationCode);
+  const isEventStaff = !ctx.permissions.has("shift:open");
+  let eventId: string | null = null;
+  if (isEventStaff) {
+    if (!input.eventId || !(await hasApprovedEventStaffRole(ctx, input.eventId, "SELLER"))) {
+      throw new ForbiddenError("shift:open");
+    }
+    if (
+      !station.venueId ||
+      !(await prisma.eventSession.findFirst({
+        where: { eventId: input.eventId, venueId: station.venueId },
+        select: { id: true },
+      }))
+    ) {
+      throw new ForbiddenError("event-staff-station-scope");
+    }
+    eventId = input.eventId;
+  }
 
   const open = await prisma.cashShift.findFirst({
-    where: { stationId: station.id, operatorUserId: ctx.userId, status: { in: ["OPEN", "CLOSING"] } },
+    where: {
+      stationId: station.id,
+      operatorUserId: ctx.userId,
+      status: { in: ["OPEN", "CLOSING"] },
+    },
     select: { id: true },
   });
   if (open) throw new ConflictError("Já existe um turno aberto neste posto para si.");
@@ -52,6 +75,7 @@ export async function openShift(ctx: AuthContext, input: OpenShiftInput) {
   const shift = await prisma.cashShift.create({
     data: {
       organizationId: ctx.organizationId!,
+      eventId,
       stationId: station.id,
       operatorUserId: ctx.userId,
       status: "OPEN",
@@ -78,22 +102,12 @@ export async function openShift(ctx: AuthContext, input: OpenShiftInput) {
  * (INITIATED → confirmPayment), emitindo os bilhetes.
  */
 export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput) {
-  if (!ctx.permissions.has("boxoffice:sell")) throw new ForbiddenError("boxoffice:sell");
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const station = await scopedStation(ctx, input.stationCode);
-
-  const shift = await prisma.cashShift.findFirst({
-    where: {
-      stationId: station.id,
-      operatorUserId: ctx.userId,
-      status: "OPEN",
-    },
-    select: { id: true },
-  });
-  if (!shift) throw new BusinessRuleError("Abra um turno antes de vender.");
 
   const hold = await prisma.inventoryHold.findUnique({
     where: { id: input.holdId },
-    select: { organizationId: true, userId: true },
+    select: { organizationId: true, userId: true, session: { select: { eventId: true } } },
   });
   if (
     !hold ||
@@ -102,6 +116,24 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
   ) {
     throw new ForbiddenError("boxoffice-hold-not-owned");
   }
+  const isEventSeller = !ctx.permissions.has("boxoffice:sell");
+  if (
+    isEventSeller &&
+    !(await hasApprovedEventStaffRole(ctx, hold.session.eventId, "SELLER"))
+  ) {
+    throw new ForbiddenError("boxoffice:sell");
+  }
+
+  const shift = await prisma.cashShift.findFirst({
+    where: {
+      stationId: station.id,
+      operatorUserId: ctx.userId,
+      status: "OPEN",
+      ...(isEventSeller ? { eventId: hold.session.eventId } : {}),
+    },
+    select: { id: true },
+  });
+  if (!shift) throw new BusinessRuleError("Abra um turno antes de vender.");
 
   // Reutiliza o motor de vendas (mesmas regras, cálculo server-side)
   const { createOrder } = await import("@/modules/sales/service");
@@ -112,7 +144,10 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
     attendees: input.attendees,
   };
   const order = await createOrder(
-    { ...ctx, permissions: new Set([...ctx.permissions, "order:create"]) },
+    {
+      ...ctx,
+      permissions: new Set([...ctx.permissions, "boxoffice:sell", "order:create"]),
+    },
     checkoutInput
   );
 
@@ -209,6 +244,15 @@ export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const shift = await prisma.cashShift.findUnique({ where: { id: input.shiftId } });
   if (!shift || shift.organizationId !== ctx.organizationId) throw new NotFoundError("Turno");
+  if (!ctx.permissions.has("shift:close")) {
+    if (
+      shift.operatorUserId !== ctx.userId ||
+      !shift.eventId ||
+      !(await hasApprovedEventStaffRole(ctx, shift.eventId, "SELLER"))
+    ) {
+      throw new ForbiddenError("shift:close");
+    }
+  }
   if (shift.status !== "OPEN" && shift.status !== "CLOSING") {
     throw new ConflictError("Turno já fechado.");
   }
