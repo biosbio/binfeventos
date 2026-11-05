@@ -44,6 +44,7 @@ export default function NewEventForm({
   const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("OTHER");
+  const [additionalOrganizerLimit, setAdditionalOrganizerLimit] = useState("1");
   const [eventDuration, setEventDuration] = useState<"one-day" | "multiple-days">("one-day");
   const [eventStartDate, setEventStartDate] = useState("");
   const [eventEndDate, setEventEndDate] = useState("");
@@ -103,6 +104,7 @@ export default function NewEventForm({
           slug: slug || undefined,
           description: description || undefined,
           category,
+          additionalOrganizerLimit: Number(additionalOrganizerLimit),
           normalTicket: {
             basePriceCents: Math.round(Number(normalTicketPrice) * 100),
             quantity: Number(normalTicketQuantity),
@@ -217,6 +219,19 @@ export default function NewEventForm({
                   <select id="event-category" value={category} onChange={(e) => setCategory(e.target.value)}>
                     <option value="CONCERT">Concerto</option><option value="CONFERENCE">Conferência</option><option value="SPORT">Desporto</option><option value="THEATER">Teatro</option><option value="FESTIVAL">Festival</option><option value="WORKSHOP">Workshop</option><option value="OTHER">Outro</option>
                   </select>
+                </div>
+                <div className="form-field">
+                  <label htmlFor="event-additional-organizers">Organizadores adicionais *</label>
+                  <select
+                    id="event-additional-organizers"
+                    value={additionalOrganizerLimit}
+                    onChange={(event) => setAdditionalOrganizerLimit(event.target.value)}
+                  >
+                    <option value="1">1 organizador adicional</option>
+                    <option value="2">2 organizadores adicionais</option>
+                    <option value="3">3 organizadores adicionais</option>
+                  </select>
+                  <span className="form-help">Depois da criação, só você poderá aprovar os organizadores convidados. Vendedores e portaria não têm limite.</span>
                 </div>
                 <fieldset className="event-create-duration">
                   <legend>Duração do evento *</legend>

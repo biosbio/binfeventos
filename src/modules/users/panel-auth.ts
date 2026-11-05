@@ -63,7 +63,7 @@ export async function verifyOrganizerPanelPassword(ctx: AuthContext, password: s
     const isApprovedEventStaff = await prisma.eventStaffMembership.findFirst({
       where: {
         userId: ctx.userId,
-        role: { in: ["SELLER", "GATE"] },
+        role: { in: ["ORGANIZER", "SELLER", "GATE"] },
         approvedAt: { not: null },
         event: { organizationId: ctx.organizationId, organization: { status: "ACTIVE" } },
       },

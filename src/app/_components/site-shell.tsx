@@ -42,9 +42,6 @@ export async function SiteHeader() {
             {canAccessEventGate ? (
               <Link className="button button-secondary" href="/portaria">Portaria</Link>
             ) : null}
-            {auth.permissions.has("org:invite") ? (
-              <Link className="button button-secondary" href="/painel/vendedores">Vendedores</Link>
-            ) : null}
             {canAccessOrganizerPanel ? (
               <Link className="button button-primary" href={isAdmin ? "/admin" : "/painel"}>
                 {isAdmin ? "Abrir administração" : "Painel do organizador"}

@@ -4,7 +4,7 @@ const inviteToken = z.string().min(40).max(50).regex(/^[A-Za-z0-9_-]+$/);
 
 export const createEventStaffInviteSchema = z.object({
   eventId: z.string().uuid(),
-  role: z.enum(["SELLER", "GATE"]),
+  role: z.enum(["ORGANIZER", "SELLER", "GATE"]),
 });
 
 export const claimEventStaffInviteSchema = z.object({ token: inviteToken });

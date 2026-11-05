@@ -5,20 +5,29 @@ import { writeAudit } from "@/shared/audit";
 import type { AuthContext } from "@/shared/auth";
 import { sha256 } from "@/shared/lib/security";
 
-export type EventStaffRole = "SELLER" | "GATE";
+export type EventStaffRole = "ORGANIZER" | "SELLER" | "GATE";
 
-async function assertEventOrganizer(ctx: AuthContext, eventId: string) {
-  if (!ctx.organizationId || !ctx.permissions.has("event:update")) {
+export async function assertEventOrganizer(ctx: AuthContext, eventId: string) {
+  if (!ctx.organizationId) {
     throw new ForbiddenError("event:update");
   }
-  const event = await prisma.event.findFirst({
+  const ownedEvent = ctx.permissions.has("event:update") ? await prisma.event.findFirst({
     where: {
       id: eventId,
       organizationId: ctx.organizationId,
       responsibleUserId: ctx.userId,
       organization: { status: "ACTIVE" },
     },
-    select: { id: true, organizationId: true, name: true },
+    select: { id: true, organizationId: true, name: true, responsibleUserId: true, additionalOrganizerLimit: true },
+  }) : null;
+  const event = ownedEvent ?? await prisma.event.findFirst({
+    where: {
+      id: eventId,
+      organizationId: ctx.organizationId,
+      organization: { status: "ACTIVE" },
+      staffMembers: { some: { userId: ctx.userId, role: "ORGANIZER", approvedAt: { not: null } } },
+    },
+    select: { id: true, organizationId: true, name: true, responsibleUserId: true, additionalOrganizerLimit: true },
   });
   if (!event) throw new NotFoundError("Evento");
   return event;
@@ -30,6 +39,23 @@ export async function createEventStaffInvite(
   role: EventStaffRole,
 ) {
   const event = await assertEventOrganizer(ctx, eventId);
+  if (role === "ORGANIZER") {
+    const [members, unclaimedInvites] = await Promise.all([
+      prisma.eventStaffMembership.count({ where: { eventId, role: "ORGANIZER" } }),
+      prisma.eventStaffInvite.count({
+        where: {
+          eventId,
+          role: "ORGANIZER",
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+          members: { none: {} },
+        },
+      }),
+    ]);
+    if (members + unclaimedInvites >= event.additionalOrganizerLimit) {
+      throw new ConflictError("O limite de co-organizadores deste evento foi atingido.");
+    }
+  }
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const invite = await prisma.eventStaffInvite.create({
@@ -103,8 +129,8 @@ export async function claimEventStaffInvite(ctx: AuthContext, token: string) {
     });
     if (session.count !== 1) throw new UnauthorizedError();
 
-    const result = await tx.eventStaffMembership.upsert({
-      where: { eventId_userId: { eventId: invite.eventId, userId: ctx.userId } },
+    return tx.eventStaffMembership.upsert({
+      where: { eventId_userId_role: { eventId: invite.eventId, userId: ctx.userId, role: invite.role } },
       update: {},
       create: {
         eventId: invite.eventId,
@@ -114,10 +140,6 @@ export async function claimEventStaffInvite(ctx: AuthContext, token: string) {
       },
       select: { id: true, role: true, approvedAt: true },
     });
-    if (result.role !== invite.role) {
-      throw new ConflictError("Já existe um pedido com outra função para este evento.");
-    }
-    return result;
   });
 
   if (!membership.approvedAt) {
@@ -137,6 +159,16 @@ export async function approveEventStaffMember(
   memberId: string,
 ) {
   const event = await assertEventOrganizer(ctx, eventId);
+  const member = await prisma.eventStaffMembership.findFirst({
+    where: { id: memberId, eventId },
+    select: { role: true, userId: true },
+  });
+  if (member?.role === "ORGANIZER" && event.responsibleUserId !== ctx.userId) {
+    throw new ForbiddenError("only-primary-organizer-can-approve-co-organizers");
+  }
+  if (member?.role === "ORGANIZER" && member.userId === event.responsibleUserId) {
+    throw new ForbiddenError("primary-organizer-cannot-be-removed");
+  }
   const updated = await prisma.eventStaffMembership.updateMany({
     where: {
       id: memberId,
@@ -161,6 +193,17 @@ export async function rejectEventStaffMember(
   memberId: string,
 ) {
   const event = await assertEventOrganizer(ctx, eventId);
+  const member = await prisma.eventStaffMembership.findFirst({
+    where: { id: memberId, eventId },
+    select: { role: true, userId: true },
+  });
+  if (member?.role === "ORGANIZER" && event.responsibleUserId !== ctx.userId) {
+    throw new ForbiddenError("only-primary-organizer-can-reject-co-organizers");
+  }
+  if (member?.role === "ORGANIZER" && member.userId === event.responsibleUserId) {
+    throw new ForbiddenError("primary-organizer-cannot-be-removed");
+  }
+  if (member?.role === "ORGANIZER") await protectInviter(ctx, eventId, member.userId);
   const deleted = await prisma.eventStaffMembership.deleteMany({
     where: { id: memberId, eventId, approvedAt: null },
   });
@@ -179,6 +222,14 @@ export async function revokeEventStaffMember(
   memberId: string,
 ) {
   const event = await assertEventOrganizer(ctx, eventId);
+  const member = await prisma.eventStaffMembership.findFirst({
+    where: { id: memberId, eventId },
+    select: { role: true, userId: true },
+  });
+  if (member?.role === "ORGANIZER" && member.userId === event.responsibleUserId) {
+    throw new ForbiddenError("primary-organizer-cannot-be-removed");
+  }
+  if (member?.role === "ORGANIZER") await protectInviter(ctx, eventId, member.userId);
   const deleted = await prisma.eventStaffMembership.deleteMany({
     where: { id: memberId, eventId, approvedAt: { not: null } },
   });
@@ -192,7 +243,7 @@ export async function revokeEventStaffMember(
 }
 
 export async function revokeEventStaffInvite(ctx: AuthContext, inviteId: string) {
-  if (!ctx.organizationId || !ctx.permissions.has("event:update")) {
+  if (!ctx.organizationId) {
     throw new ForbiddenError("event:update");
   }
   const invite = await prisma.eventStaffInvite.findFirst({
@@ -200,7 +251,10 @@ export async function revokeEventStaffInvite(ctx: AuthContext, inviteId: string)
       id: inviteId,
       event: {
         organizationId: ctx.organizationId,
-        responsibleUserId: ctx.userId,
+        OR: [
+          { responsibleUserId: ctx.userId },
+          { staffMembers: { some: { userId: ctx.userId, role: "ORGANIZER", approvedAt: { not: null } } } },
+        ],
       },
     },
     select: { id: true, eventId: true, event: { select: { organizationId: true } } },
@@ -219,12 +273,42 @@ export async function revokeEventStaffInvite(ctx: AuthContext, inviteId: string)
   });
 }
 
+async function protectInviter(ctx: AuthContext, eventId: string, targetUserId: string) {
+  const actorMembership = await prisma.eventStaffMembership.findFirst({
+    where: {
+      eventId,
+      userId: ctx.userId,
+      role: "ORGANIZER",
+      approvedAt: { not: null },
+    },
+    select: { invite: { select: { createdByUserId: true } } },
+  });
+  if (actorMembership?.invite?.createdByUserId === targetUserId) {
+    throw new ForbiddenError("cannot-remove-organizer-who-invited-you");
+  }
+}
+
 export async function hasApprovedEventStaffRole(
   ctx: AuthContext,
   eventId: string,
   role: EventStaffRole,
 ) {
   if (!ctx.organizationId) return false;
+  if (role === "SELLER" || role === "GATE") {
+    const eventManager = await prisma.event.findFirst({
+      where: {
+        id: eventId,
+        organizationId: ctx.organizationId,
+        organization: { status: "ACTIVE" },
+        OR: [
+          { responsibleUserId: ctx.userId },
+          { staffMembers: { some: { userId: ctx.userId, role: "ORGANIZER", approvedAt: { not: null } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (eventManager) return true;
+  }
   const membership = await prisma.eventStaffMembership.findFirst({
     where: {
       eventId,

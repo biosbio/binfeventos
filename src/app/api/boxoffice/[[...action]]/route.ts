@@ -45,7 +45,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "shifts/movement") {
-      const auth = await requirePermission("cash:movement");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/boxoffice/schemas")).cashMovementSchema, await req.json());
       const { registerCashMovement } = await import("@/modules/boxoffice/service");
       await registerCashMovement(auth, body);

@@ -37,10 +37,19 @@ async function scopedEvent(ctx: AuthContext, eventId: string) {
   });
   // Administrador da plataforma pode aprovar publicação globalmente.
   // Todos os restantes continuam estritamente limitados à organização da sessão.
+  const isPrimaryOrganizer = Boolean(event && ctx.userId === event.responsibleUserId);
+  const isApprovedCoOrganizer = Boolean(
+    event &&
+      ctx.organizationId === event.organizationId &&
+      await prisma.eventStaffMembership.findFirst({
+        where: { eventId: event.id, userId: ctx.userId, role: "ORGANIZER", approvedAt: { not: null } },
+        select: { id: true },
+      }),
+  );
   if (
     !event ||
     (ctx.platformRole !== "PLATFORM_ADMIN" &&
-      (!ctx.organizationId || event.organizationId !== ctx.organizationId))
+      (!ctx.organizationId || event.organizationId !== ctx.organizationId || (!isPrimaryOrganizer && !isApprovedCoOrganizer)))
   ) {
     throw new NotFoundError("Evento"); // neutro: não revela existência em outra org
   }
@@ -107,6 +116,7 @@ async function createEventForOrganization(
         entryRules: input.entryRules ?? null,
         terms: input.terms ?? null,
         responsibleUserId: ctx.userId,
+        additionalOrganizerLimit: input.additionalOrganizerLimit,
         status: "DRAFT",
         sessions: {
           create: {
@@ -212,6 +222,7 @@ export async function createPlatformEvent(
         entryRules: input.entryRules ?? null,
         terms: input.terms ?? null,
         responsibleUserId: ctx.userId,
+        additionalOrganizerLimit: input.additionalOrganizerLimit,
         status: "DRAFT",
         sessions: {
           create: {

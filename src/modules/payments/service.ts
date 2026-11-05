@@ -587,6 +587,15 @@ export async function confirmPayment(
       where: { paymentId: payment.id, status: "BLOCKED" },
       data: { finishedAt: new Date() },
     });
+    if (payment.order.channel === "BOX_OFFICE" && payment.order.shiftId) {
+      await tx.cashShift.updateMany({
+        where: { id: payment.order.shiftId },
+        data: {
+          totalSalesCents: { increment: payment.amountCents },
+          ...(payment.method === "CASH" ? { expectedCents: { increment: payment.amountCents } } : {}),
+        },
+      });
+    }
     return true;
   });
 

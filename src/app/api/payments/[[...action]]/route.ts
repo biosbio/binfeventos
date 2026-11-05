@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac } from "node:crypto";
 import { errorResponse, ValidationError } from "@/shared/errors";
 import { requireAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
@@ -26,6 +27,47 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
   const path = action.join("/");
 
   try {
+    if (path === "sandbox/authorize") {
+      if (process.env.NODE_ENV === "production") {
+        throw new ValidationError("A simulação sandbox está disponível apenas em desenvolvimento e testes.");
+      }
+      const auth = await requireAuth();
+      const body = parse(z.object({ providerRef: z.string().trim().min(20).max(160) }), await req.json());
+      const { prisma } = await import("@/shared/lib/prisma");
+      const payment = await prisma.payment.findFirst({
+        where: { providerRef: body.providerRef, provider: { code: "sandbox" } },
+        select: {
+          amountCents: true,
+          orderId: true,
+          provider: { select: { adapterConfig: true } },
+          order: {
+            select: {
+              buyerUserId: true,
+              channel: true,
+              cashShift: { select: { operatorUserId: true } },
+            },
+          },
+        },
+      });
+      if (!payment) throw new ValidationError("Pagamento sandbox não encontrado.");
+      const isBuyer = payment.order.buyerUserId === auth.userId;
+      const isCashier = payment.order.channel === "BOX_OFFICE" && payment.order.cashShift?.operatorUserId === auth.userId;
+      const cashierStepUp = Boolean(auth.panelVerifiedUntil && auth.panelVerifiedUntil.getTime() > Date.now());
+      if (payment.order.channel === "BOX_OFFICE" ? (!isCashier || !cashierStepUp) : !isBuyer) {
+        throw new ValidationError("Este pagamento não pertence à sua sessão autenticada.");
+      }
+      const adapterConfig = (payment.provider.adapterConfig ?? {}) as Record<string, unknown>;
+      const webhookSecret = adapterConfig.webhookSecret;
+      if (typeof webhookSecret !== "string" || webhookSecret.length < 32) {
+        throw new ValidationError("O prestador sandbox não está configurado.");
+      }
+      const rawBody = JSON.stringify({ providerRef: body.providerRef, status: "CONFIRMED", amountCents: payment.amountCents });
+      const signature = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+      const { handleWebhook } = await import("@/modules/payments/service");
+      await handleWebhook("sandbox", rawBody, { "x-sandbox-signature": signature });
+      return NextResponse.json({ ok: true, orderId: payment.orderId });
+    }
+
     if (path === "initiate") {
       const auth = await requireAuth();
       const body = parse((await import("@/modules/payments/schemas")).initiatePaymentSchema, await req.json());

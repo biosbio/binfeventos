@@ -3,8 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import pathModule from "node:path";
 import { errorResponse, AppError, ValidationError, NotFoundError, ForbiddenError } from "@/shared/errors";
-import { requireAuth, requirePermission } from "@/shared/auth";
+import { requireAuth, requirePanelAuth, requirePermission } from "@/shared/auth";
 import { rateLimit } from "@/shared/lib/security";
+import type { PermissionCode } from "@/shared/permissions";
 import { z } from "zod";
 
 // ============================================================
@@ -48,6 +49,17 @@ function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.out
   return r.data;
 }
 
+async function requireEventManagerPermission(eventId: string, permission: PermissionCode) {
+  const current = await requirePanelAuth();
+  if (current.platformRole === "PLATFORM_ADMIN") return requirePermission("admin:platform");
+  if (!current.permissions.has(permission)) {
+    const { assertEventOrganizer } = await import("@/modules/event-staff/service");
+    await assertEventOrganizer(current, eventId);
+    return current;
+  }
+  return requirePermission(permission);
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
   const { action = [] } = await ctx.params;
   const path = action.join("/");
@@ -55,13 +67,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
   try {
     if (path === "upload-cover") {
       const current = await requireAuth();
+      const formData = await req.formData();
       const auth = current.platformRole === "PLATFORM_ADMIN"
         ? await requirePermission("admin:platform")
-        : await requirePermission("event:create");
+        : current.permissions.has("event:create")
+          ? await requirePermission("event:create")
+          : await requirePanelAuth();
+      if (current.platformRole !== "PLATFORM_ADMIN" && !current.permissions.has("event:create")) {
+        const eventId = parse(UUID, String(formData.get("eventId") ?? ""));
+        const { assertEventOrganizer } = await import("@/modules/event-staff/service");
+        await assertEventOrganizer(auth, eventId);
+      }
       if (await rateLimit(`event-cover-upload:${auth.userId}`, 20, 60 * 60 * 1000)) {
         throw new AppError("RATE_LIMITED", 429, "Limite de carregamentos de imagem atingido. Tente novamente mais tarde.");
       }
-      const formData = await req.formData();
       const file = formData.get("file");
       if (!(file instanceof File) || file.size === 0 || file.size > MAX_COVER_SIZE) {
         throw new ValidationError("Escolha uma imagem até 5 MB.");
@@ -114,11 +133,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
     // POST /api/events/{id}/sessions
     if (action.length === 2 && action[1] === "sessions") {
-      const current = await requireAuth();
-      const auth = current.platformRole === "PLATFORM_ADMIN"
-        ? await requirePermission("admin:platform")
-        : await requirePermission("session:manage");
       const eventId = parse(UUID, action[0]);
+      const auth = await requireEventManagerPermission(eventId, "session:manage");
       const raw = (await req.json()) as Record<string, unknown>;
       const body = parse((await import("@/modules/events/schemas")).sessionSchema, { ...raw, eventId });
       const { addSession } = await import("@/modules/events/service");
@@ -144,17 +160,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
         throw new ForbiddenError("admin-publication-approval-required");
       }
       if (["SUSPENDED", "SOLD_OUT"].includes(body.to)) {
-        const auth = await requirePermission("event:publish");
+        const auth = await requireEventManagerPermission(eventId, "event:publish");
         const { transitionEvent } = await import("@/modules/events/service");
         return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
       }
       if (["CANCELLED", "POSTPONED"].includes(body.to)) {
-        const auth = await requirePermission("event:cancel");
+        const auth = await requireEventManagerPermission(eventId, "event:cancel");
         const { transitionEvent } = await import("@/modules/events/service");
         return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
       }
       // COMPLETED/CLOSED: encerramento exige administrador
-      const auth = await requirePermission("org:manage");
+      const auth = await requireEventManagerPermission(eventId, "org:manage");
       const { transitionEvent } = await import("@/modules/events/service");
       return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
     }
@@ -173,7 +189,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ action?: 
     // PATCH /api/events/{id}
     if (action.length === 1) {
       const eventId = parse(UUID, action[0]);
-      const auth = await requirePermission("event:update");
+      const auth = await requireEventManagerPermission(eventId, "event:update");
       const body = parse((await import("@/modules/events/schemas")).updateEventSchema, await req.json());
       const { updateEvent } = await import("@/modules/events/service");
       await updateEvent(auth, eventId, body);
@@ -211,7 +227,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ action?: st
       const current = await requireAuth();
       const auth = current.platformRole === "PLATFORM_ADMIN"
         ? await requirePermission("admin:platform")
-        : await requirePermission("event:read");
+        : current.permissions.has("event:read")
+          ? await requirePermission("event:read")
+          : await requireEventManagerPermission(eventId, "event:read");
       const { getEvent } = await import("@/modules/events/service");
       const event = await getEvent(auth, eventId);
       return NextResponse.json({ ok: true, event });

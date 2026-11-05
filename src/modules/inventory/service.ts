@@ -10,6 +10,7 @@ import {
 import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import { generateIdempotencyKey } from "@/shared/lib/security";
 import type { AuthContext } from "@/shared/auth";
+import { assertEventOrganizer } from "@/modules/event-staff/service";
 import type {
   CreateBatchInput,
   CreateTicketTypeInput,
@@ -44,6 +45,7 @@ async function scopedTicketType(ctx: AuthContext, ticketTypeId: string) {
     include: { event: { select: { id: true, status: true, organizationId: true } } },
   });
   if (!tt || tt.organizationId !== ctx.organizationId) throw new NotFoundError("Tipo de bilhete");
+  if (!ctx.permissions.has("ticketType:manage")) await assertEventOrganizer(ctx, tt.event.id);
   return tt;
 }
 
@@ -61,6 +63,7 @@ export async function createTicketType(ctx: AuthContext, input: CreateTicketType
     },
   });
   if (!event || event.organizationId !== organizationId) throw new NotFoundError("Evento");
+  if (!ctx.permissions.has("ticketType:manage")) await assertEventOrganizer(ctx, event.id);
   if (["CANCELLED", "COMPLETED", "CLOSED"].includes(event.status)) {
     throw new BusinessRuleError("Evento em estado terminal.");
   }
@@ -298,9 +301,10 @@ export async function transitionBatch(
 
   const tt = await prisma.ticketType.findFirst({
     where: { batches: { some: { id: batchId } } },
-    select: { organizationId: true, status: true },
+    select: { organizationId: true, status: true, eventId: true },
   });
   if (!tt || tt.organizationId !== ctx.organizationId) throw new NotFoundError("Lote");
+  if (!ctx.permissions.has("batch:manage")) await assertEventOrganizer(ctx, tt.eventId);
   if (tt.status !== "ACTIVE" && to === "OPEN") {
     throw new BusinessRuleError("Ative o tipo de bilhete antes de abrir o lote.");
   }

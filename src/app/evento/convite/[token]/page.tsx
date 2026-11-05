@@ -23,10 +23,14 @@ export default async function EventStaffInvitePage({
   }
   const auth = await getAuthContext();
   const nextPath = `/evento/convite/${token}`;
-  const roleName = invite.role === "SELLER" ? "vendedor" : "membro da portaria";
-  const assignment = invite.role === "SELLER"
-    ? "vender bilhetes presencialmente"
-    : "validar bilhetes e acessos";
+  const roleName = invite.role === "ORGANIZER"
+    ? "co-organizador(a)"
+    : invite.role === "SELLER" ? "vendedor(a)" : "membro da portaria";
+  const assignment = invite.role === "ORGANIZER"
+    ? "gerir este evento, incluindo vendas e validação de entradas"
+    : invite.role === "SELLER"
+      ? "registar vendas presenciais e receber pagamentos pelos meios disponíveis"
+      : "validar entradas deste evento. Este convite não dá acesso às vendas";
 
   return (
     <>
@@ -37,7 +41,7 @@ export default async function EventStaffInvitePage({
           <h1>Participar em {invite.eventName}</h1>
           <p>
             Foi convidado(a) como {roleName} para {assignment}. O acesso fica limitado
-            a este evento e só será ativado depois da aprovação do organizador.
+            a este evento e só será ativado depois da aprovação do organizador principal.
           </p>
           {auth ? (
             <EventStaffInviteClaim token={token} />

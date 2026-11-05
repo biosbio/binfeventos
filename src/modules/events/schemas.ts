@@ -40,6 +40,7 @@ export const createEventSchema = z.object({
   coverImageUrl: coverImageUrlSchema.optional(),
   entryRules: z.string().trim().max(3000).optional(),
   terms: z.string().trim().max(10000).optional(),
+  additionalOrganizerLimit: z.coerce.number().int().min(1).max(3).default(1),
 });
 
 const eventVenueSchema = z.object({

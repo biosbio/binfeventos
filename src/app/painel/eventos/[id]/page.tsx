@@ -3,11 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { getAuthContext } from "@/shared/auth";
 import { prisma } from "@/shared/lib/prisma";
-import { getCountryOptions } from "@/shared/lib/locale-options";
 import { SiteFooter, SiteHeader } from "../../../_components/site-shell";
-import EditEventForm from "./edit-form";
 import TicketInventoryManager from "./ticket-inventory-manager";
-import EventStaffManager from "./event-staff-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +16,7 @@ export default async function ManageEventPage({
   const ctx = await getAuthContext();
   if (!ctx) redirect("/login?next=%2Fpainel");
   if (ctx.platformRole === "PLATFORM_ADMIN") redirect("/admin");
-  if (!ctx.organizationId || !ctx.permissions.has("event:update")) {
+  if (!ctx.organizationId) {
     redirect("/organizador");
   }
 
@@ -29,7 +26,10 @@ export default async function ManageEventPage({
     where: {
       id,
       organizationId: ctx.organizationId,
-      responsibleUserId: ctx.userId,
+      OR: [
+        { responsibleUserId: ctx.userId },
+        { staffMembers: { some: { userId: ctx.userId, role: "ORGANIZER", approvedAt: { not: null } } } },
+      ],
     },
     select: {
       id: true,
@@ -79,21 +79,6 @@ export default async function ManageEventPage({
         },
         orderBy: { createdAt: "asc" },
       },
-      staffMembers: {
-        select: {
-          id: true,
-          role: true,
-          invitedAt: true,
-          approvedAt: true,
-          user: { select: { fullName: true, email: true, status: true } },
-        },
-        orderBy: { invitedAt: "desc" },
-      },
-      staffInvites: {
-        where: { revokedAt: null, expiresAt: { gt: new Date() } },
-        select: { id: true, role: true, createdAt: true, expiresAt: true },
-        orderBy: { createdAt: "desc" },
-      },
     },
   });
   if (!event) notFound();
@@ -102,24 +87,16 @@ export default async function ManageEventPage({
     <>
       <SiteHeader />
       <main className="container event-manage-page">
-        <span className="section-kicker">ÁREA DE ORGANIZAÇÃO · EVENTO</span>
+        <span className="section-kicker">ÁREA DE ORGANIZAÇÃO · BILHETES</span>
         <h1>Gerir evento</h1>
-        <p className="section-copy">
-          Estado atual: <strong>{event.status}</strong>. Um evento novo só fica público após aprovação da equipa BINF EVENTOS.
-        </p>
-        <EditEventForm event={event} countryOptions={getCountryOptions()} />
+        <p className="section-copy">Configure os tipos de bilhete, lotes, quantidades e sessões deste evento.</p>
         <TicketInventoryManager
           eventId={event.id}
           sessions={event.sessions}
           ticketTypes={event.ticketTypes}
           currency={event.organization.currency}
         />
-        <EventStaffManager
-          eventId={event.id}
-          members={event.staffMembers}
-          invites={event.staffInvites}
-        />
-        <p className="auth-switch"><Link href="/painel">Voltar aos meus eventos</Link></p>
+        <p className="auth-switch"><Link href={`/painel/eventos/${event.id}/comissao`}>Gerir comissão e equipa</Link> · <Link href="/painel">Voltar aos meus eventos</Link></p>
       </main>
       <SiteFooter />
     </>

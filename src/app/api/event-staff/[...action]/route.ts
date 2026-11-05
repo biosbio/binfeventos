@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAuth, requirePermission } from "@/shared/auth";
-import { errorResponse, ValidationError } from "@/shared/errors";
+import { requireAuth, requirePanelAuth } from "@/shared/auth";
+import { errorResponse, NotFoundError, ValidationError } from "@/shared/errors";
+import { prisma } from "@/shared/lib/prisma";
 
 function parse<TSchema extends z.ZodType>(schema: TSchema, data: unknown): z.output<TSchema> {
   const result = schema.safeParse(data);
@@ -24,12 +25,13 @@ export async function POST(
 
   try {
     if (path === "invites/create") {
-      const auth = await requirePermission("event:update");
+      const auth = await requirePanelAuth();
       const body = parse(
         (await import("@/modules/event-staff/schemas")).createEventStaffInviteSchema,
         await req.json(),
       );
-      const { createEventStaffInvite } = await import("@/modules/event-staff/service");
+      const { assertEventOrganizer, createEventStaffInvite } = await import("@/modules/event-staff/service");
+      await assertEventOrganizer(auth, body.eventId);
       const invite = await createEventStaffInvite(auth, body.eventId, body.role);
       return NextResponse.json({ ok: true, invite }, { status: 201 });
     }
@@ -46,13 +48,14 @@ export async function POST(
     }
 
     if (path === "members/approve" || path === "members/reject" || path === "members/revoke") {
-      const auth = await requirePermission("event:update");
+      const auth = await requirePanelAuth();
       const body = parse(
         (await import("@/modules/event-staff/schemas")).eventStaffMemberSchema,
         await req.json(),
       );
-      const { approveEventStaffMember, rejectEventStaffMember, revokeEventStaffMember } =
+      const { approveEventStaffMember, assertEventOrganizer, rejectEventStaffMember, revokeEventStaffMember } =
         await import("@/modules/event-staff/service");
+      await assertEventOrganizer(auth, body.eventId);
       if (path === "members/approve") {
         await approveEventStaffMember(auth, body.eventId, body.memberId);
       } else if (path === "members/reject") {
@@ -64,12 +67,18 @@ export async function POST(
     }
 
     if (path === "invites/revoke") {
-      const auth = await requirePermission("event:update");
+      const auth = await requirePanelAuth();
       const body = parse(
         (await import("@/modules/event-staff/schemas")).eventStaffInviteIdSchema,
         await req.json(),
       );
-      const { revokeEventStaffInvite } = await import("@/modules/event-staff/service");
+      const { assertEventOrganizer, revokeEventStaffInvite } = await import("@/modules/event-staff/service");
+      const invite = await prisma.eventStaffInvite.findUnique({
+        where: { id: body.inviteId },
+        select: { eventId: true },
+      });
+      if (!invite) throw new NotFoundError("Convite");
+      await assertEventOrganizer(auth, invite.eventId);
       await revokeEventStaffInvite(auth, body.inviteId);
       return NextResponse.json({ ok: true });
     }

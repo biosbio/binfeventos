@@ -276,6 +276,7 @@ model Venue {
 }
 
 enum EventStaffRole {
+  ORGANIZER
   SELLER
   GATE
 }
@@ -289,6 +290,7 @@ model Event {
   category       EventCategory @default(OTHER)
   coverImageUrl  String?
   responsibleUserId String?    @db.Uuid
+  additionalOrganizerLimit Int @default(1)
   status         EventStatus  @default(DRAFT)
   entryRules     String?
   terms          String?
@@ -338,7 +340,7 @@ model EventStaffMembership {
   user   User              @relation(fields: [userId], references: [id])
   invite EventStaffInvite? @relation(fields: [inviteId], references: [id])
 
-  @@unique([eventId, userId])
+  @@unique([eventId, userId, role])
   @@index([eventId, role, approvedAt])
   @@map("event_staff_memberships")
 }

@@ -17,7 +17,7 @@ export default async function PanelAuthPage({
     ? await prisma.eventStaffMembership.findMany({
         where: {
           userId: ctx.userId,
-          role: { in: ["SELLER", "GATE"] },
+          role: { in: ["ORGANIZER", "SELLER", "GATE"] },
           approvedAt: { not: null },
           event: { organizationId: ctx.organizationId, organization: { status: "ACTIVE" } },
         },
@@ -27,7 +27,10 @@ export default async function PanelAuthPage({
     : [];
   const isApprovedEventSeller = eventStaffRoles.some((membership) => membership.role === "SELLER");
   const isApprovedEventGate = eventStaffRoles.some((membership) => membership.role === "GATE");
-  const isApprovedEventStaff = isApprovedEventSeller || isApprovedEventGate;
+  const isApprovedEventOrganizer = eventStaffRoles.some((membership) => membership.role === "ORGANIZER");
+  const canSell = isApprovedEventSeller || isApprovedEventOrganizer;
+  const canValidate = isApprovedEventGate || isApprovedEventOrganizer;
+  const isApprovedEventStaff = canSell || canValidate;
   if (
     ctx.platformRole !== "PLATFORM_ADMIN" &&
     (!ctx.organizationId || (ctx.permissions.size === 0 && !isApprovedEventStaff))
@@ -37,8 +40,8 @@ export default async function PanelAuthPage({
   if (ctx.panelVerifiedUntil && ctx.panelVerifiedUntil.getTime() > Date.now()) {
     const destination = ctx.platformRole === "PLATFORM_ADMIN"
       ? next === "/admin/users" ? next : "/admin"
-      : (isApprovedEventSeller && next === "/bilheteira") ||
-          (isApprovedEventGate && next === "/portaria")
+      : (canSell && next === "/bilheteira") ||
+          (canValidate && next === "/portaria")
         ? next
         : "/painel";
     redirect(destination);
@@ -48,8 +51,8 @@ export default async function PanelAuthPage({
     ? next
     : isAdmin
       ? "/admin"
-      : (isApprovedEventSeller && next === "/bilheteira") ||
-          (isApprovedEventGate && next === "/portaria")
+      : (canSell && next === "/bilheteira") ||
+          (canValidate && next === "/portaria")
         ? next
         : "/painel";
   return <PanelAuthForm isAdmin={isAdmin} nextPath={nextPath} />;

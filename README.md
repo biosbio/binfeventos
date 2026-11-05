@@ -118,6 +118,12 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `cash` | Físico | Bilheteira física (turnos de caixa) |
 | `multicaixa-express` | Angola (EMIS) | QR/deeplink; UNKNOWN protege inventário; reembolso operacional via portal EMIS |
 
+Na bilheteira presencial, vendedores escolhem dinheiro ou um dos meios configurados
+para a moeda da organização. O pagamento em dinheiro confirma a venda no momento;
+os restantes meios emitem os bilhetes após a confirmação do prestador. Vendedor e
+portaria são funções independentes: validar entradas requer um convite de portaria
+separado. Co-organizadores aprovados podem gerir o evento, as vendas e a portaria.
+
 ## Endpoints disponíveis
 
 | Método | Rota | Descrição | Requisito |
@@ -220,6 +226,8 @@ As migrations Prisma versionadas na branch incluem:
 - `20261101112000_unique_ledger_compensation` — unicidade das referências de lançamentos compensatórios.
 - `20261101113000_ticket_holder_identity` — identidade do titular do bilhete.
 - `20261101190000_password_reset_codes` — códigos de recuperação de palavra-passe.
+- `20261105120000_event_organizer_roles` — convites e limite de co-organizadores por evento.
+- `20261105123000_event_staff_multiple_roles` — permite que a mesma pessoa aceite convites independentes de vendedor e portaria.
 
 Em produção, aplique migrations versionadas com `npx prisma migrate deploy` depois de backup e validação do estado/dados existentes. Antes de aplicar a migration de unicidade do livro-razão, confirme que não existem referências compensatórias duplicadas. Antes do backfill de titularidade, verifique se existem emails que colidem após normalização para minúsculas. Faça primeiro um ensaio em staging com cópia representativa da base de dados; não use `prisma migrate dev` em produção.
 

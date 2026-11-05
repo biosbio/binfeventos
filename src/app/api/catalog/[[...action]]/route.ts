@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, ValidationError } from "@/shared/errors";
-import { requirePermission } from "@/shared/auth";
+import { requirePanelAuth, requirePermission } from "@/shared/auth";
 import { z } from "zod";
 
 // ============================================================
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
   try {
     if (path === "ticket-types") {
-      const auth = await requirePermission("ticketType:manage");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/inventory/schemas")).createTicketTypeSchema, await req.json());
       const { createTicketType } = await import("@/modules/inventory/service");
       const ticketType = await createTicketType(auth, body);
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "ticket-types/quantity") {
-      const auth = await requirePermission("ticketType:manage");
+      const auth = await requirePanelAuth();
       const body = parse(
         (await import("@/modules/inventory/schemas")).updateTicketTypeQuantitySchema,
         await req.json(),
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
     }
 
     if (path === "batches") {
-      const auth = await requirePermission("batch:manage");
+      const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/inventory/schemas")).createBatchSchema, await req.json());
       const { createBatch } = await import("@/modules/inventory/service");
       const batch = await createBatch(auth, body);
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
 
     // Parte 19: sem esta rota, nenhum lote ficava à venda
     if (path === "batches/status") {
-      const auth = await requirePermission("batch:manage");
+      const auth = await requirePanelAuth();
       const body = parse(batchStatusSchema, await req.json());
       const { transitionBatch } = await import("@/modules/inventory/service");
       const result = await transitionBatch(auth, body.batchId, body.to);

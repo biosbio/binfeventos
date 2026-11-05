@@ -157,6 +157,20 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
     data: { channel: "BOX_OFFICE", shiftId: shift.id },
   });
 
+  if (input.method !== "CASH") {
+    if (!input.providerCode) throw new BusinessRuleError("Selecione um prestador de pagamento.");
+    const { initiatePayment } = await import("@/modules/payments/service");
+    const payment = await initiatePayment(
+      { ...ctx, permissions: new Set([...ctx.permissions, "boxoffice:sell"]) },
+      {
+        orderId: order.orderId,
+        providerCode: input.providerCode,
+        method: input.method,
+      },
+    );
+    return { ...order, payment };
+  }
+
   // Pagamento a dinheiro: prestador CASH (seed), mesmo fluxo de confirmação
   const provider = await prisma.paymentProvider.findFirst({
     where: { code: "cash", isActive: true },
@@ -187,12 +201,6 @@ export async function boxOfficeSale(ctx: AuthContext, input: BoxOfficeSaleInput)
   const { confirmPayment } = await import("@/modules/payments/service");
   await confirmPayment(providerRef, { source: "box_office_cash", shiftId: shift.id });
 
-  // Atualiza caixa esperado do turno
-  await prisma.cashShift.update({
-    where: { id: shift.id },
-    data: { totalSalesCents: { increment: order.totalCents } },
-  });
-
   await writeAudit({
     organizationId: ctx.organizationId!,
     actorUserId: ctx.userId,
@@ -216,6 +224,12 @@ export async function registerCashMovement(
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const shift = await prisma.cashShift.findUnique({ where: { id: input.shiftId } });
   if (!shift || shift.organizationId !== ctx.organizationId) throw new NotFoundError("Turno");
+  if (
+    !ctx.permissions.has("cash:movement") &&
+    (!shift.eventId || !(await hasApprovedEventStaffRole(ctx, shift.eventId, "ORGANIZER")))
+  ) {
+    throw new ForbiddenError("cash:movement");
+  }
   if (shift.status !== "OPEN" && shift.status !== "CLOSING") {
     throw new ConflictError("Turno fechado não aceita movimentos.");
   }

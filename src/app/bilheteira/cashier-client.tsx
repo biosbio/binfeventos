@@ -16,15 +16,46 @@ type Ticket = {
 };
 type Session = { id: string; eventId: string; name: string; startsAt: string; tickets: Ticket[] };
 type Attendee = { fullName: string; documentType: string; documentNumber: string };
+type PaymentOption = {
+  providerCode: string;
+  providerName: string;
+  method: "CARD" | "MOBILE_MONEY" | "DIGITAL_WALLET" | "BANK_TRANSFER" | "CASH";
+};
+
+const PAYMENT_LABELS: Record<PaymentOption["method"], string> = {
+  CARD: "Cartão",
+  MOBILE_MONEY: "Dinheiro móvel",
+  DIGITAL_WALLET: "Carteira digital",
+  BANK_TRANSFER: "Transferência bancária",
+  CASH: "Dinheiro",
+};
+
+function localSandboxUrl(value: string): string {
+  try {
+    const target = new URL(value, window.location.origin);
+    if (
+      target.pathname.startsWith("/checkout/sandbox-authorization") &&
+      ["localhost", "127.0.0.1", "0.0.0.0"].includes(target.hostname)
+    ) {
+      target.protocol = window.location.protocol;
+      target.host = window.location.host;
+    }
+    return target.toString();
+  } catch {
+    return value;
+  }
+}
 
 export default function CashierClient({
   currency,
+  paymentOptions,
   stations,
   activeShift,
   sessions,
   eventStaffOnly,
 }: {
   currency: string;
+  paymentOptions: PaymentOption[];
   stations: Station[];
   activeShift: Shift;
   sessions: Session[];
@@ -48,6 +79,9 @@ export default function CashierClient({
   const [quantity, setQuantity] = useState(1);
   const [buyerName, setBuyerName] = useState("");
   const [buyerEmail, setBuyerEmail] = useState("");
+  const [paymentOptionKey, setPaymentOptionKey] = useState(
+    `${paymentOptions[0]?.providerCode ?? "cash"}:${paymentOptions[0]?.method ?? "CASH"}`,
+  );
   const [attendees, setAttendees] = useState<Attendee[]>([
     { fullName: "", documentType: "PASSAPORTE", documentNumber: "" },
   ]);
@@ -65,6 +99,9 @@ export default function CashierClient({
   const tickets = session?.tickets ?? [];
   const ticket = tickets.find((item) => `${item.ticketTypeId}:${item.batchId}` === ticketKey);
   const amount = ticket ? ticket.unitPriceCents * quantity : 0;
+  const paymentOption = paymentOptions.find(
+    (option) => `${option.providerCode}:${option.method}` === paymentOptionKey,
+  ) ?? paymentOptions[0];
 
   function chooseSession(nextSessionId: string) {
     setSessionId(nextSessionId);
@@ -157,6 +194,8 @@ export default function CashierClient({
         body: JSON.stringify({
           stationCode: activeShift.station.code,
           holdId: holdData.holdId,
+          providerCode: paymentOption?.providerCode,
+          method: paymentOption?.method ?? "CASH",
           buyerName: buyerName.trim(),
           buyerEmail: buyerEmail.trim(),
           attendees: attendees.map((attendee) => ({
@@ -173,6 +212,14 @@ export default function CashierClient({
         return;
       }
 
+      if (paymentOption?.method !== "CASH") {
+        if (data.order.payment?.redirectUrl) {
+          window.location.assign(localSandboxUrl(data.order.payment.redirectUrl));
+        } else {
+          router.push(`/checkout/return?order=${encodeURIComponent(data.order.orderId)}`);
+        }
+        return;
+      }
       setSuccess(`Venda concluída. Encomenda ${data.order.orderNumber}; bilhete(s) emitido(s).`);
       setBuyerName("");
       setBuyerEmail("");
@@ -280,7 +327,7 @@ export default function CashierClient({
         <div className="cashier-open-shift">
           <span className="cashier-status-dot" />
           <div><strong>Turno aberto</strong><small>{activeShift.station.name}</small></div>
-          <span className="cashier-cash-badge">Pagamento em dinheiro</span>
+          <span className="cashier-cash-badge">Caixa presencial</span>
         </div>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         {success ? <p className="form-success" role="status">{success}</p> : null}
@@ -289,6 +336,20 @@ export default function CashierClient({
         ) : (
           <form className="cashier-form" onSubmit={sellForCash}>
             <h2>Registar venda</h2>
+            <label className="cashier-field">
+              <span>Meio de pagamento</span>
+              <select
+                value={paymentOptionKey}
+                onChange={(event) => setPaymentOptionKey(event.target.value)}
+                required
+              >
+                {paymentOptions.map((option) => (
+                  <option key={`${option.providerCode}:${option.method}`} value={`${option.providerCode}:${option.method}`}>
+                    {PAYMENT_LABELS[option.method]} · {option.providerName}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="cashier-field">
               <span>Evento e sessão</span>
               <select value={sessionId} onChange={(event) => chooseSession(event.target.value)} required>

@@ -46,6 +46,22 @@ const PAYMENT_METHOD_LABELS: Record<PaymentOption["method"], string> = {
   CASH: "Dinheiro",
 };
 
+function localSandboxUrl(value: string): string {
+  try {
+    const target = new URL(value, window.location.origin);
+    if (
+      target.pathname.startsWith("/checkout/sandbox-authorization") &&
+      ["localhost", "127.0.0.1", "0.0.0.0"].includes(target.hostname)
+    ) {
+      target.protocol = window.location.protocol;
+      target.host = window.location.host;
+    }
+    return target.toString();
+  } catch {
+    return value;
+  }
+}
+
 export default function CheckoutClient() {
   const search = useSearchParams();
   const sessionId = search.get("sessionId");
@@ -211,7 +227,7 @@ export default function CheckoutClient() {
         return;
       }
       if (data.redirectUrl) {
-        window.location.href = data.redirectUrl;
+        window.location.href = localSandboxUrl(data.redirectUrl);
         return;
       }
       setError("Pagamento iniciado. Aguarde a confirmação por email/notificação.");

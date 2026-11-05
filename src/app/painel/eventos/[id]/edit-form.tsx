@@ -79,6 +79,7 @@ export default function EditEventForm({
       if (coverFile) {
         const upload = new FormData();
         upload.set("file", coverFile);
+        upload.set("eventId", event.id);
         const uploadResponse = await fetch("/api/events/upload-cover", { method: "POST", body: upload });
         const uploadData = await uploadResponse.json();
         if (!uploadResponse.ok) {

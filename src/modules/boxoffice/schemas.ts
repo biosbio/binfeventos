@@ -31,6 +31,8 @@ export const cashMovementSchema = z.object({
 
 export const boxOfficeSaleSchema = z.object({
   stationCode: z.string().trim().min(2).max(40),
+  providerCode: z.string().trim().min(2).max(40).optional(),
+  method: z.enum(["CARD", "MOBILE_MONEY", "DIGITAL_WALLET", "BANK_TRANSFER", "CASH"]).default("CASH"),
   holdId: z.string().uuid(),
   buyerName: z.string().trim().min(3).max(120),
   buyerEmail: z.string().trim().toLowerCase().email(),
@@ -44,6 +46,9 @@ export const boxOfficeSaleSchema = z.object({
       })
     )
     .min(1),
+}).refine((value) => value.method === "CASH" || Boolean(value.providerCode), {
+  message: "Selecione o prestador do meio de pagamento.",
+  path: ["providerCode"],
 });
 
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;

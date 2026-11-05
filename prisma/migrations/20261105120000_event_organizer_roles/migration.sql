@@ -1,0 +1,4 @@
+ALTER TYPE "EventStaffRole" ADD VALUE 'ORGANIZER';
+
+ALTER TABLE "events"
+ADD COLUMN "additionalOrganizerLimit" INTEGER NOT NULL DEFAULT 1;

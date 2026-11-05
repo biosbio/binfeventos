@@ -4,6 +4,7 @@ import { assertOrgActive } from "@/shared/audit";
 import { getAuthContext } from "@/shared/auth";
 import { SiteFooter, SiteHeader } from "../_components/site-shell";
 import CashierClient from "./cashier-client";
+import { listPaymentOptions } from "@/modules/payments/service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export default async function BoxOfficePage() {
     ? await prisma.eventStaffMembership.findMany({
         where: {
           userId: auth.userId,
-          role: "SELLER",
+          role: { in: ["ORGANIZER", "SELLER"] },
           approvedAt: { not: null },
           event: {
             organizationId: auth.organizationId,
@@ -133,19 +134,25 @@ export default async function BoxOfficePage() {
           .map((staff) => staff.eventId)
       : [],
   }));
+  const currency = organization?.currency ?? "AOA";
+  const paymentOptions = [
+    { providerCode: "cash", providerName: "Pagamento em dinheiro", method: "CASH" as const },
+    ...(await listPaymentOptions(currency)).filter((option) => option.method !== "CASH"),
+  ];
 
   return (
     <>
       <SiteHeader />
       <main className="container cashier-page">
         <span className="section-kicker">BILHETEIRA PRESENCIAL</span>
-        <h1>Vendas em dinheiro</h1>
+        <h1>Bilheteira presencial</h1>
         <p className="cashier-intro">
-          O vendedor autorizado regista o pagamento recebido em dinheiro. A venda
-          é confirmada e os bilhetes são emitidos no fim da operação.
+          Registe vendas presenciais com dinheiro ou com os meios de pagamento
+          disponíveis. Os bilhetes são emitidos após a confirmação do pagamento.
         </p>
         <CashierClient
-          currency={organization?.currency ?? "AOA"}
+          currency={currency}
+          paymentOptions={paymentOptions}
           stations={cashierStations}
           activeShift={shift}
           sessions={events}
