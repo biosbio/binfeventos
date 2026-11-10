@@ -47,7 +47,7 @@ export default async function EventCommissionPage({
         orderBy: { invitedAt: "desc" },
       },
       staffInvites: {
-        where: { revokedAt: null, expiresAt: { gt: new Date() } },
+        where: { revokedAt: null, expiresAt: { gt: new Date() }, members: { none: {} } },
         select: { id: true, role: true, createdAt: true, expiresAt: true },
         orderBy: { createdAt: "desc" },
       },

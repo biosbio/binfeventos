@@ -400,6 +400,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .cashier-field { display: grid; gap: 7px; color: #293a32; font-size: 12px; font-weight: 800; }
 .cashier-field input,.cashier-field select { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid #d7dfd8; border-radius: 11px; outline: none; color: var(--ink); background: #fbfcfa; font: inherit; font-size: 14px; }
 .cashier-field input:focus,.cashier-field select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(23,107,80,.12); }
+.cashier-station-form-actions,.cashier-station-actions { display: flex; align-items: center; gap: 9px; }
+.cashier-station-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.cashier-station-list li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px; border: 1px solid #e4ebe4; border-radius: 12px; background: #fff; }
+.cashier-station-details { display: grid; gap: 4px; min-width: 0; }
+.cashier-station-details strong { color: #293a32; font-size: 13px; }
+.cashier-station-details small { color: var(--muted); font-size: 12px; }
+.cashier-icon-button { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #dce4dc; border-radius: 10px; color: #176b50; background: #fff; font-size: 20px; cursor: pointer; }
+.cashier-icon-button:hover { background: #f3f7f2; }
+.cashier-icon-button-danger { color: #8a3a32; }
+.cashier-icon-button:disabled { opacity: .55; cursor: wait; }
 .cashier-open-shift { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .cashier-open-shift > div { display: grid; gap: 3px; }
 .cashier-open-shift small { color: var(--muted); }

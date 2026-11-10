@@ -65,6 +65,8 @@ export default async function BoxOfficePage() {
       select: {
         id: true,
         eventId: true,
+        openingFloatCents: true,
+        expectedCents: true,
         station: { select: { code: true, name: true } },
       },
     }),

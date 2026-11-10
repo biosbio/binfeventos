@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Station = { code: string; name: string; eventIds?: string[] };
-type Shift = { id: string; eventId: string | null; station: Station } | null;
+type Shift = {
+  id: string;
+  eventId: string | null;
+  openingFloatCents: number;
+  expectedCents: number;
+  station: Station;
+} | null;
 type Ticket = {
   ticketTypeId: string;
   batchId: string;
@@ -88,6 +94,10 @@ export default function CashierClient({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (activeShift) setCountedCash((activeShift.expectedCents / 100).toFixed(2));
+  }, [activeShift?.id, activeShift?.expectedCents]);
 
   const availableStations = eventStaffOnly
     ? stations.filter((station) => station.eventIds?.includes(eventId))
@@ -452,7 +462,7 @@ export default function CashierClient({
 
             {ticket ? (
               <div className="cashier-total">
-                <span>Total recebido em dinheiro</span>
+                <span>Total da venda · {PAYMENT_LABELS[paymentOption?.method ?? "CASH"]}</span>
                 <strong>{new Intl.NumberFormat("pt-PT", { style: "currency", currency: ticket.currency }).format(amount / 100)}</strong>
               </div>
             ) : null}
@@ -462,9 +472,15 @@ export default function CashierClient({
           </form>
         )}
         <form className="cashier-form" onSubmit={closeShift}>
-          <h2>Fechar turno</h2>
+          <div className="cashier-total">
+            <span>Valor esperado na caixa</span>
+            <strong>{new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(activeShift.expectedCents / 100)}</strong>
+          </div>
+          <p className="form-help">
+            Soma o fundo inicial e as vendas em dinheiro confirmadas, considerando também movimentos autorizados. Conte o dinheiro físico e ajuste o valor abaixo se for diferente.
+          </p>
           <label className="cashier-field">
-            <span>Dinheiro contado ({currency})</span>
+            <span>Dinheiro físico contado ({currency})</span>
             <input
               type="number"
               min="0"

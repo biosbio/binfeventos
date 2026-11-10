@@ -907,6 +907,7 @@ model BoxOfficeStation {
   venueId        String?       @db.Uuid
   code           String
   name           String
+  location       String?
   status         StationStatus @default(ACTIVE)
   createdAt      DateTime      @default(now())
 

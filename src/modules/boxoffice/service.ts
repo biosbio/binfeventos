@@ -256,7 +256,10 @@ export async function registerCashMovement(
 /** Fechar turno: contagem, diferença registada (nunca ignorada). */
 export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
-  const shift = await prisma.cashShift.findUnique({ where: { id: input.shiftId } });
+  const shift = await prisma.cashShift.findUnique({
+    where: { id: input.shiftId },
+    include: { organization: { select: { currency: true } } },
+  });
   if (!shift || shift.organizationId !== ctx.organizationId) throw new NotFoundError("Turno");
   if (!ctx.permissions.has("shift:close")) {
     if (
@@ -295,7 +298,7 @@ export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
           organizationId: shift.organizationId,
           type: "CASH_DIFFERENCE",
           amountCents: differenceCents,
-          currency: "AOA",
+          currency: shift.organization.currency,
           description: `Turno ${shift.id}: diferença de caixa`,
           approvedByUserId: ctx.userId,
         },
