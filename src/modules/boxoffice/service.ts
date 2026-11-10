@@ -7,7 +7,7 @@ import {
 } from "@/shared/errors";
 import { writeAudit, sanitizeForAudit, assertOrgActive } from "@/shared/audit";
 import type { AuthContext } from "@/shared/auth";
-import { hasApprovedEventStaffRole } from "@/modules/event-staff/service";
+import { assertEventOrganizer, hasApprovedEventStaffRole } from "@/modules/event-staff/service";
 import type { BoxOfficeSaleInput, CloseShiftInput, OpenShiftInput } from "./schemas";
 import type { CreateOrderInput } from "@/modules/sales/schemas";
 
@@ -323,4 +323,60 @@ export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
   });
 
   return { shiftId: shift.id, differenceCents, status: "CLOSED" };
+}
+
+/** Organização confirma que recebeu o dinheiro contado no fecho do turno. */
+export async function confirmCashDeposit(ctx: AuthContext, depositId: string) {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  const deposit = await prisma.cashDeposit.findUnique({
+    where: { id: depositId },
+    include: {
+      shift: {
+        select: {
+          id: true,
+          organizationId: true,
+          eventId: true,
+          status: true,
+        },
+      },
+    },
+  });
+  if (!deposit || deposit.shift.organizationId !== ctx.organizationId) {
+    throw new NotFoundError("Entrega de caixa");
+  }
+  if (!ctx.permissions.has("cash:deposit") && !ctx.permissions.has("shift:reconcile")) {
+    if (!deposit.shift.eventId) throw new ForbiddenError("cash:deposit");
+    await assertEventOrganizer(ctx, deposit.shift.eventId);
+  }
+  if (deposit.status === "CONFIRMED") throw new ConflictError("Esta entrega já foi confirmada.");
+  if (!["COUNTED", "HANDED_OVER", "DEPOSITED"].includes(deposit.status)) {
+    throw new BusinessRuleError("Esta entrega não pode ser confirmada neste estado.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const changed = await tx.cashDeposit.updateMany({
+      where: {
+        id: deposit.id,
+        status: { in: ["COUNTED", "HANDED_OVER", "DEPOSITED"] },
+      },
+      data: {
+        status: "CONFIRMED",
+        handedToUserId: ctx.userId,
+        confirmedAt: new Date(),
+      },
+    });
+    if (changed.count !== 1) throw new ConflictError("Esta entrega já foi confirmada.");
+    await tx.cashShift.update({
+      where: { id: deposit.shift.id },
+      data: { status: "RECONCILED" },
+    });
+  });
+
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "cash.deposit_received",
+    after: sanitizeForAudit({ depositId: deposit.id, shiftId: deposit.shift.id, amountCents: deposit.amountCents }),
+  });
+  return { depositId: deposit.id, status: "CONFIRMED", amountCents: deposit.amountCents };
 }

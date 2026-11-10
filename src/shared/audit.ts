@@ -79,6 +79,7 @@ export type AuditAction =
   | "shift.opened"
   | "shift.closed"
   | "shift.difference_recorded"
+  | "cash.deposit_received"
   | "ticket.issued"
   | "ticket.revoked"
   | "ticket.transfer_requested"

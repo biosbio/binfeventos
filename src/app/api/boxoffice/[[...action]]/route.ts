@@ -118,6 +118,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, ...result });
     }
 
+    if (path === "deposits/confirm") {
+      const auth = await requirePanelAuth();
+      const body = parse(z.object({ depositId: z.string().uuid() }), await req.json());
+      const { confirmCashDeposit } = await import("@/modules/boxoffice/service");
+      const result = await confirmCashDeposit(auth, body.depositId);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
     if (path === "shifts/movement") {
       const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/boxoffice/schemas")).cashMovementSchema, await req.json());
