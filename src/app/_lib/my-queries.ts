@@ -50,7 +50,7 @@ export async function getMyContext() {
   const ctx = await requireAuth();
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
-    select: { fullName: true, email: true },
+    select: { fullName: true, email: true, mfaEnabled: true, platformRole: true },
   });
   if (!user) throw new NotFoundError("Utilizador");
   return { ctx, user };

@@ -30,8 +30,9 @@ function parseBody<T>(schema: z.ZodType<T>, data: unknown): T {
   return result.data;
 }
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
-  const { action } = await ctx.params;
+export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action: segments = [] } = await ctx.params;
+  const action = segments.join("/");
 
   try {
     switch (action) {

@@ -10,6 +10,7 @@ export type AdminUserRow = {
   phone: string | null;
   status: "ACTIVE" | "SUSPENDED" | "CLOSED";
   platformRole: "USER" | "PLATFORM_ADMIN";
+  mfaEnabled: boolean;
   createdAt: string;
   memberships: { id: string; organization: string; role: string; acceptedAt: string | null }[];
 };
@@ -18,13 +19,16 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium" }).format(new Date(value));
 }
 
-export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
+export default function AdminUsersTable({ users, currentUserId, isPrimaryAdmin }: { users: AdminUserRow[]; currentUserId: string; isPrimaryAdmin: boolean }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [pending, startTransition] = useTransition();
   const [membershipBusyId, setMembershipBusyId] = useState<string | null>(null);
+  const [roleEditorId, setRoleEditorId] = useState<string | null>(null);
+  const [roleTotpCode, setRoleTotpCode] = useState("");
+  const [roleSaving, setRoleSaving] = useState(false);
 
   async function updateUser(payload: { userId: string; fullName?: string; phone?: string | null; status?: AdminUserRow["status"]; totpCode?: string }) {
     setError("");
@@ -76,6 +80,37 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
     }
   }
 
+  async function updatePlatformRole(user: AdminUserRow, platformRole: AdminUserRow["platformRole"]) {
+    setRoleSaving(true); setError(""); setSuccess("");
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, platformRole, totpCode: roleTotpCode }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (result.code === "PANEL_STEP_UP_REQUIRED") {
+          window.location.href = "/acesso-painel?next=%2Fadmin%2Fusers";
+          return;
+        }
+        setError(result.message ?? "Não foi possível alterar o acesso administrativo.");
+        return;
+      }
+      setRoleEditorId(null); setRoleTotpCode("");
+      setSuccess(platformRole === "PLATFORM_ADMIN"
+        ? user.mfaEnabled
+          ? "Acesso de administrador concedido. As sessões anteriores foram terminadas."
+          : "Conta designada. A pessoa deve iniciar sessão e configurar o próprio MFA para ativar o acesso."
+        : "Acesso de administrador removido.");
+      startTransition(() => router.refresh());
+    } catch {
+      setError("Erro de rede ao alterar o acesso administrativo.");
+    } finally {
+      setRoleSaving(false);
+    }
+  }
+
   if (users.length === 0) {
     return <div className="empty-state">Não foram encontrados utilizadores com estes filtros.</div>;
   }
@@ -94,10 +129,6 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
                 <strong>{user.fullName}</strong>
                 <div className="form-help">{user.email}</div>
                 <div className="form-help">{user.phone || "Sem telefone"} · Registado em {dateLabel(user.createdAt)}</div>
-              </div>
-              <div className="admin-user-badges">
-                <span className={`status-pill status-${user.status.toLowerCase()}`}>{user.status}</span>
-                {isPlatformAdmin ? <span className="status-pill">Administrador da plataforma</span> : null}
               </div>
             </div>
 
@@ -173,6 +204,39 @@ export default function AdminUsersTable({ users }: { users: AdminUserRow[] }) {
                 </button>
               </div>
             )}
+            {!editing && (!isPlatformAdmin || (isPrimaryAdmin && user.id !== currentUserId)) ? (
+              <>
+                <div className="admin-user-actions">
+                  <button
+                    className={isPlatformAdmin ? "button button-secondary" : "button button-primary"}
+                    type="button"
+                    disabled={pending || roleSaving || user.id === currentUserId || (!isPlatformAdmin && user.status !== "ACTIVE")}
+                    onClick={() => { setError(""); setSuccess(""); setRoleTotpCode(""); setRoleEditorId(roleEditorId === user.id ? null : user.id); }}
+                  >
+                    {user.id === currentUserId ? "A sua conta" : isPlatformAdmin ? user.mfaEnabled ? "Remover acesso de administrador" : "Remover designação de administrador" : user.mfaEnabled ? "Conceder acesso de administrador" : "Designar como administrador"}
+                  </button>
+                  {!isPlatformAdmin && !user.mfaEnabled ? <span className="form-help">Após a designação, a pessoa inicia sessão e configura o próprio MFA para ativar o acesso.</span> : null}
+                  {isPlatformAdmin && !user.mfaEnabled ? <span className="form-help">Aguarda a configuração do MFA; as permissões administrativas ainda estão bloqueadas.</span> : null}
+                  {!isPlatformAdmin && user.status !== "ACTIVE" ? <span className="form-help">Só é possível conceder acesso a uma conta ativa.</span> : null}
+                </div>
+                {roleEditorId === user.id ? (
+                  <form className="admin-user-edit" onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    void updatePlatformRole(user, isPlatformAdmin ? "USER" : "PLATFORM_ADMIN");
+                  }}>
+                    <label className="form-field">
+                      <span>Código MFA para confirmar {isPlatformAdmin ? "a remoção" : "a concessão"} de acesso</span>
+                      <input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={roleTotpCode} onChange={(event) => setRoleTotpCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+                    </label>
+                    {isPlatformAdmin ? <p className="form-help">A operação termina as sessões dessa conta. O último administrador ativo não pode ser removido.</p> : <p className="form-help">Se ainda não tiver MFA, a conta ficará designada sem permissões até a pessoa o configurar.</p>}
+                    <div className="admin-user-actions">
+                      <button className="button button-primary" type="submit" disabled={pending || roleSaving || roleTotpCode.length !== 6}>{roleSaving ? "A atualizar…" : isPlatformAdmin ? "Confirmar remoção" : "Confirmar acesso de administrador"}</button>
+                      <button className="button button-secondary" type="button" disabled={roleSaving} onClick={() => { setRoleEditorId(null); setRoleTotpCode(""); }}>Cancelar</button>
+                    </div>
+                  </form>
+                ) : null}
+              </>
+            ) : null}
           </article>
         );
       })}

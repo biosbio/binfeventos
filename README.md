@@ -107,6 +107,7 @@ npm run test:e2e          # arranca o dev server automaticamente
 | `/admin/events` | Rever e aprovar propostas de eventos | Server/Client |
 | `/admin/events/new` | Criar evento e sessão inicial na organização central BINF EVENTOS | Server/Client |
 | `/admin` | Painel central da plataforma, exclusivo do administrador | Server |
+| `/admin/users` | Gerir contas e conceder/remover acesso de administrador | Server/Client |
 | `/financas` | Liquidações + livro-razão (FINANCE_MANAGER) | Server |
 | `/financas/acoes` | Preparar/aprovar/pagar liquidações (dupla aprovação) | Client |
 
@@ -131,8 +132,8 @@ separado. Co-organizadores aprovados podem gerir o evento, as vendas e a portari
 | POST | `/api/users/register` | Registar conta | público |
 | POST | `/api/users/login` | Login (MFA obrigatório para administradores) | público |
 | POST | `/api/users/logout` | Terminar sessão | autenticado |
-| POST | `/api/users/mfa/setup` | Iniciar MFA (gera QR otpauth) | administrador autenticado |
-| POST | `/api/users/mfa/confirm` | Confirmar MFA | administrador autenticado |
+| POST | `/api/users/mfa/setup` | Iniciar MFA (gera segredo TOTP) | utilizador autenticado |
+| POST | `/api/users/mfa/confirm` | Confirmar MFA | utilizador autenticado |
 | POST | `/api/users/password-recovery-start` | Iniciar recuperação por email/SMS (resposta não revela se a conta existe) | público + rate limit |
 | POST | `/api/users/password-recovery-confirm` | Confirmar código e definir nova password; administrador usa TOTP | público + rate limit |
 | POST | `/api/users/panel-auth-verify` | Confirmar password do organizador ou password + TOTP do administrador | autenticado |
@@ -189,7 +190,7 @@ separado. Co-organizadores aprovados podem gerir o evento, as vendas e a portari
 - **Passwords:** hash com Argon2id; a aplicação não armazena passwords em texto simples.
 - **Sessões:** tokens opacos; apenas o hash do token é persistido. A sessão é transportada em cookie HttpOnly e pode ser revogada.
 - **Logout:** clientes, organizadores e administradores podem terminar a sessão pelo botão no cabeçalho/painel; o token da sessão é revogado no servidor.
-- **MFA TOTP:** obrigatório no login de administradores da plataforma, com código de seis dígitos da aplicação autenticadora. Após MFA válido no login, a sessão administrativa fica verificada durante a validade da sessão (12 horas), sem pedir o mesmo código novamente ao abrir a administração. A ativação é exclusiva de administradores e o MFA administrativo não pode ser desativado. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
+- **MFA TOTP:** obrigatório no login de administradores da plataforma, com código de seis dígitos da aplicação autenticadora. Um administrador atual pode designar uma conta em `/admin/users`; essa conta só recebe permissões de plataforma depois de configurar o próprio MFA em Minha Conta. Concessões e remoções exigem o TOTP de quem executa a ação; apenas o email definido em `ADMIN_EMAIL` (ou o padrão do seed) pode remover outros administradores. As alterações são auditadas, revogam sessões antigas e não permitem remover o último administrador ativo. Os segredos TOTP são cifrados em repouso com AES-256-GCM; a chave de cifragem é fornecida por `MFA_ENCRYPTION_KEY`.
 - **Acesso reforçado ao painel:** administradores confirmam password + TOTP no login, e essa validação dura as 12 horas da sessão; organizadores confirmam novamente a password. Novos organizadores criam o perfil da organização ao submeter a primeira proposta.
 - **Propostas de evento:** qualquer utilizador autenticado pode criar um perfil de organizador e submeter eventos em rascunho. O painel lista os eventos criados pelo próprio utilizador; só a administração pode aprovar a publicação.
 - **País, moeda e capas:** a criação do perfil de organização disponibiliza países e moedas suportados pelo runtime. As capas são validadas e gravadas em `public/uploads/event-covers`; em produção, configure armazenamento persistente para esta pasta ou substitua-o por armazenamento de objetos.

@@ -18,6 +18,14 @@ export const passwordSchema = z
   .regex(/[A-Z]/, "Password deve conter uma maiúscula.")
   .regex(/[0-9]/, "Password deve conter um número.");
 
+export const adminPasswordSchema = z
+  .string()
+  .min(9, "A password do administrador deve ter pelo menos 9 caracteres.")
+  .regex(/[a-z]/, "A password deve conter uma letra minúscula.")
+  .regex(/[A-Z]/, "A password deve conter uma letra maiúscula.")
+  .regex(/[0-9]/, "A password deve conter um número.")
+  .regex(/[^A-Za-z0-9]/, "A password deve conter um símbolo.");
+
 export const registerSchema = z.object({
   fullName: z.string().trim().min(3, "Nome completo obrigatório.").max(120),
   email: emailSchema,
@@ -39,9 +47,9 @@ export const passwordRecoveryConfirmSchema = z.object({
   email: emailSchema,
   code: z.string().regex(/^\d{6}$/).optional(),
   totpCode: z.string().regex(/^\d{6}$/).optional(),
-  newPassword: passwordSchema,
-}).refine((value) => Boolean(value.code), {
-  message: "Indique o código enviado por email.",
+  newPassword: z.union([passwordSchema, adminPasswordSchema]),
+}).refine((value) => Boolean(value.code) !== Boolean(value.totpCode), {
+  message: "Indique apenas o código de recuperação apropriado.",
 });
 
 export const enableMfaSchema = z.object({

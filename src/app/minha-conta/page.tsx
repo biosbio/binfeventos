@@ -4,6 +4,7 @@ import { SiteHeader, SiteFooter } from "../_components/site-shell";
 import { getMyContext, listMyOrders } from "../_lib/my-queries";
 import { listPublicEvents } from "../_lib/public-queries";
 import TicketCancelAction from "./ticket-cancel-action";
+import MfaEnrollment from "./mfa-enrollment";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,8 @@ export default async function MyAccountPage() {
           As suas encomendas e bilhetes digitais.
         </p>
 
+        <MfaEnrollment initiallyEnabled={user.mfaEnabled} adminAccessPending={user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled} />
+
         <h2 style={{ marginTop: 30 }}>As minhas compras e bilhetes</h2>
         {orders.length === 0 ? (
           <div className="empty-state" style={{ marginTop: 30 }}>
@@ -136,7 +139,15 @@ export default async function MyAccountPage() {
                             Ver bilhete e QR →
                           </Link>
                         ) : null}
-                        {t.status === "ISSUED" && new Date() < new Date(t.session.startsAt.getTime() - 3 * 60 * 60 * 1000) ? <TicketCancelAction ticketId={t.id} ticketNumber={t.ticketNumber} /> : null}
+                        {t.status === "ISSUED" ? (
+                          Date.now() < t.session.startsAt.getTime() - 3 * 60 * 60 * 1000 ? (
+                            <TicketCancelAction ticketId={t.id} ticketNumber={t.ticketNumber} />
+                          ) : (
+                            <span className="form-help">
+                              Prazo para cancelar encerrado. O pedido precisava ser feito até {new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short" }).format(new Date(t.session.startsAt.getTime() - 3 * 60 * 60 * 1000))}.
+                            </span>
+                          )
+                        ) : null}
                         </div>
                       </div>
                     ))}

@@ -19,6 +19,7 @@ export type AuditAction =
   | "auth.mfa_enabled"
   | "admin.user.updated"
   | "admin.user.status_changed"
+  | "admin.user.role_changed"
   | "org.created"
   | "org.suspended"
   | "org.reactivated"

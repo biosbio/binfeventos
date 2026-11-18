@@ -78,7 +78,7 @@ deteção e responsável atribuído.
 
 | Controlo | Onde se aplica no sistema |
 |---|---|
-| SEC-01 MFA | `User.mfaEnabled`; obrigatório para perfis admin/financeiros |
+| SEC-01 MFA | `User.mfaEnabled`; obrigatório antes de ativar permissões de administrador da plataforma |
 | SEC-02 RBAC/ABAC | `Role`/`Permission` + guards por organização/evento/recurso |
 | SEC-03 Sessões | `Session.tokenHash`, expiração e revogação |
 | SEC-06 TLS | Middleware/HSTS (infraestrutura) |

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAuthContext } from "@/shared/auth";
 import { prisma } from "@/shared/lib/prisma";
+import { isPrimaryPlatformAdmin } from "@/modules/users/platform-admin";
 import AdminUsersTable, { type AdminUserRow } from "./users-table";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,7 @@ export default async function AdminUsersPage({
         phone: true,
         status: true,
         platformRole: true,
+        mfaEnabled: true,
         createdAt: true,
         memberships: {
           select: {
@@ -73,6 +75,7 @@ export default async function AdminUsersPage({
     phone: user.phone,
     status: user.status,
     platformRole: user.platformRole,
+    mfaEnabled: user.mfaEnabled,
     createdAt: user.createdAt.toISOString(),
     memberships: user.memberships.map((membership) => ({
       id: membership.id,
@@ -88,7 +91,7 @@ export default async function AdminUsersPage({
         <div>
           <span className="section-kicker">BINF EVENTOS · ADMINISTRAÇÃO CENTRAL</span>
           <h1>Gestão de utilizadores</h1>
-          <p>Administre contas, veja pedidos de vendedores e controle os acessos de bilheteira em todas as organizações.</p>
+          <p>Administre contas, veja pedidos de vendedores e controle os acessos de bilheteira. Os administradores podem designar novas contas; só o administrador principal pode remover o acesso de outro administrador. O acesso novo ativa depois da configuração do MFA pela própria pessoa.</p>
         </div>
         <Link className="button button-secondary" href="/admin">Voltar ao painel</Link>
       </div>
@@ -115,7 +118,7 @@ export default async function AdminUsersPage({
         <h2>Contas registadas</h2>
         <span>{total} resultado(s){total > 100 ? " · a mostrar os 100 mais recentes" : ""}</span>
       </div>
-      <AdminUsersTable users={rows} />
+      <AdminUsersTable users={rows} currentUserId={auth.userId} isPrimaryAdmin={isPrimaryPlatformAdmin(auth.email)} />
     </main>
   );
 }
