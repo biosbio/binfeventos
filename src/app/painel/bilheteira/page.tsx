@@ -37,13 +37,15 @@ export default async function BoxOfficeStationsPage() {
       select: {
         id: true,
         amountCents: true,
+        outstandingCents: true,
+        receivedCents: true,
         createdAt: true,
         shift: {
           select: {
             closedAt: true,
-            operator: { select: { fullName: true } },
+            operator: { select: { id: true, fullName: true } },
             station: { select: { name: true, location: true } },
-            event: { select: { name: true } },
+            event: { select: { id: true, name: true } },
           },
         },
       },
@@ -68,12 +70,16 @@ export default async function BoxOfficeStationsPage() {
           deposits={deposits.map((deposit) => ({
             id: deposit.id,
             amountCents: deposit.amountCents,
+            outstandingCents: deposit.outstandingCents || deposit.amountCents,
+            receivedCents: deposit.receivedCents,
             createdAt: deposit.createdAt.toISOString(),
             closedAt: deposit.shift.closedAt?.toISOString() ?? null,
             sellerName: deposit.shift.operator.fullName,
+            sellerId: deposit.shift.operator.id,
             stationName: deposit.shift.station.name,
             stationLocation: deposit.shift.station.location,
             eventName: deposit.shift.event?.name ?? "Bilheteira da organização",
+            eventId: deposit.shift.event?.id ?? null,
           }))}
           totalSalesCents={sales._sum.totalSalesCents ?? 0}
         />

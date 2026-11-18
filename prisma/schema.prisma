@@ -738,8 +738,12 @@ model PaymentAttempt {
 enum RefundStatus {
   REQUESTED
   UNDER_ANALYSIS
+  SELLER_REVIEW
+  ORGANIZER_REVIEW
+  PLATFORM_REVIEW
   APPROVED
   PROCESSING
+  REFUND_AWAITING_PLATFORM_CONFIRMATION
   COMPLETED
   FAILED
   REJECTED
@@ -756,6 +760,26 @@ model Refund {
   status         RefundStatus @default(REQUESTED)
   approvedByUserId String?    @db.Uuid
   requestedByUserId String?   @db.Uuid
+  ticketId String? @db.Uuid
+  sellerReviewedByUserId String? @db.Uuid
+  sellerReviewedAt DateTime?
+  sellerNotes String?
+  organizerApprovedByUserId String? @db.Uuid
+  organizerApprovedAt DateTime?
+  organizerNotes String?
+  organizerAssumesRefund Boolean @default(false)
+  platformApprovedByUserId String? @db.Uuid
+  platformApprovedAt DateTime?
+  platformNotes String?
+  platformOverride Boolean @default(false)
+  refundExecutedByUserId String? @db.Uuid
+  refundRecipient String?
+  refundMethod String?
+  refundPaidAt DateTime?
+  refundEvidenceRef String?
+  refundEvidenceNotes String?
+  platformConfirmedByUserId String? @db.Uuid
+  platformConfirmedAt DateTime?
   providerRef    String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -763,8 +787,11 @@ model Refund {
   organization Organization @relation(fields: [organizationId], references: [id])
   order        Order         @relation(fields: [orderId], references: [id])
   payment      Payment       @relation(fields: [paymentId], references: [id])
+  ticket       Ticket?       @relation(fields: [ticketId], references: [id])
 
   @@index([orderId])
+  @@index([ticketId])
+  @@index([organizationId, status])
   @@map("refunds")
 }
 
@@ -992,6 +1019,9 @@ model CashDeposit {
   id          String            @id @default(uuid()) @db.Uuid
   shiftId     String            @db.Uuid
   amountCents Int
+  outstandingCents Int          @default(0)
+  receivedCents Int             @default(0)
+  differenceNotes String?
   status      CashDepositStatus @default(COUNTED)
   handedToUserId String?       @db.Uuid
   depositedAt DateTime?
@@ -1048,6 +1078,7 @@ model Ticket {
   ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id])
   orderAttendee OrderAttendee? @relation(fields: [orderAttendeeId], references: [id])
   accessEvents AccessEvent[]
+  refunds      Refund[]
   transferRequests TicketTransferRequest[]
 
   @@index([orderId])

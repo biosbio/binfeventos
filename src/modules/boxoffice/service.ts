@@ -307,7 +307,15 @@ export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
 
     // Depósito inicial: valor contado fica em COUNTED
     await tx.cashDeposit.create({
-      data: { shiftId: shift.id, amountCents: input.countedCents, status: "COUNTED" },
+      // A dívida pendente conserva o valor esperado da caixa, mesmo quando
+      // o vendedor entrega menos dinheiro. O organizador lança o recebido
+      // real e decide se mantém ou encerra a diferença.
+      data: {
+        shiftId: shift.id,
+        amountCents: Math.max(input.countedCents, shift.expectedCents),
+        outstandingCents: Math.max(input.countedCents, shift.expectedCents),
+        status: "COUNTED",
+      },
     });
   });
 
@@ -326,10 +334,10 @@ export async function closeShift(ctx: AuthContext, input: CloseShiftInput) {
 }
 
 /** Organização confirma que recebeu o dinheiro contado no fecho do turno. */
-export async function confirmCashDeposit(ctx: AuthContext, depositId: string) {
+export async function confirmCashDeposit(ctx: AuthContext, input: { depositId: string; receivedCents: number; clearDifference: boolean; differenceNotes?: string }) {
   if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
   const deposit = await prisma.cashDeposit.findUnique({
-    where: { id: depositId },
+    where: { id: input.depositId },
     include: {
       shift: {
         select: {
@@ -352,6 +360,13 @@ export async function confirmCashDeposit(ctx: AuthContext, depositId: string) {
   if (!["COUNTED", "HANDED_OVER", "DEPOSITED"].includes(deposit.status)) {
     throw new BusinessRuleError("Esta entrega não pode ser confirmada neste estado.");
   }
+  const outstandingCents = deposit.outstandingCents || deposit.amountCents;
+  if (input.receivedCents > outstandingCents) throw new BusinessRuleError("O valor recebido não pode exceder o valor pendente.");
+  const remainingCents = outstandingCents - input.receivedCents;
+  if (remainingCents > 0 && input.clearDifference && !input.differenceNotes?.trim()) {
+    throw new BusinessRuleError("Justifique a diferença após conversar pessoalmente com o vendedor.");
+  }
+  const cleared = remainingCents === 0 || input.clearDifference;
 
   await prisma.$transaction(async (tx) => {
     const changed = await tx.cashDeposit.updateMany({
@@ -360,23 +375,84 @@ export async function confirmCashDeposit(ctx: AuthContext, depositId: string) {
         status: { in: ["COUNTED", "HANDED_OVER", "DEPOSITED"] },
       },
       data: {
-        status: "CONFIRMED",
+        status: cleared ? "CONFIRMED" : "COUNTED",
+        outstandingCents: cleared ? 0 : remainingCents,
+        receivedCents: { increment: input.receivedCents },
+        ...(input.differenceNotes?.trim() ? { differenceNotes: input.differenceNotes.trim() } : {}),
         handedToUserId: ctx.userId,
-        confirmedAt: new Date(),
+        ...(cleared ? { confirmedAt: new Date() } : {}),
       },
     });
     if (changed.count !== 1) throw new ConflictError("Esta entrega já foi confirmada.");
-    await tx.cashShift.update({
-      where: { id: deposit.shift.id },
-      data: { status: "RECONCILED" },
-    });
+    if (cleared) await tx.cashShift.update({ where: { id: deposit.shift.id }, data: { status: "RECONCILED" } });
   });
 
   await writeAudit({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
     action: "cash.deposit_received",
-    after: sanitizeForAudit({ depositId: deposit.id, shiftId: deposit.shift.id, amountCents: deposit.amountCents }),
+    after: sanitizeForAudit({ depositId: deposit.id, shiftId: deposit.shift.id, receivedCents: input.receivedCents, remainingCents: cleared ? 0 : remainingCents, clearDifference: input.clearDifference, differenceNotes: input.differenceNotes }),
   });
-  return { depositId: deposit.id, status: "CONFIRMED", amountCents: deposit.amountCents };
+  return { depositId: deposit.id, status: cleared ? "CONFIRMED" : "COUNTED", receivedCents: input.receivedCents, outstandingCents: cleared ? 0 : remainingCents };
+}
+
+/** Confirma, numa operação, os depósitos pendentes do mesmo evento/vendedor. */
+export async function confirmCashDeposits(ctx: AuthContext, input: { depositIds: string[]; receivedCents: number; clearDifference: boolean; differenceNotes?: string }) {
+  if (!ctx.organizationId) throw new ForbiddenError("no-active-organization");
+  if (!ctx.permissions.has("cash:deposit") && !ctx.permissions.has("shift:reconcile")) throw new ForbiddenError("cash:deposit");
+  const deposits = await prisma.cashDeposit.findMany({
+    where: { id: { in: input.depositIds }, status: { in: ["COUNTED", "HANDED_OVER", "DEPOSITED"] }, shift: { organizationId: ctx.organizationId } },
+    include: { shift: { select: { id: true, organizationId: true, operatorUserId: true, eventId: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!deposits.length || deposits.length !== new Set(input.depositIds).size) throw new NotFoundError("Valores pendentes de recebimento");
+  const first = deposits[0];
+  if (!first) throw new NotFoundError("Valores pendentes de recebimento");
+  if (deposits.some((deposit) => deposit.shift.operatorUserId !== first.shift.operatorUserId || deposit.shift.eventId !== first.shift.eventId)) {
+    throw new BusinessRuleError("Agrupe apenas valores do mesmo vendedor e evento.");
+  }
+  const totalOutstanding = deposits.reduce((sum, deposit) => sum + (deposit.outstandingCents || deposit.amountCents), 0);
+  if (input.receivedCents > totalOutstanding) throw new BusinessRuleError("O valor recebido não pode exceder o total pendente do evento.");
+  if (input.receivedCents < 0) throw new BusinessRuleError("O valor recebido não pode ser negativo.");
+  const differenceCents = totalOutstanding - input.receivedCents;
+  if (differenceCents > 0 && input.clearDifference && !input.differenceNotes?.trim()) throw new BusinessRuleError("Justifique a diferença após conversar pessoalmente com o vendedor.");
+
+  let remainingReceived = input.receivedCents;
+  const updates: { id: string; shiftId: string; received: number; outstanding: number; cleared: boolean }[] = [];
+  for (const deposit of deposits) {
+    const due = deposit.outstandingCents || deposit.amountCents;
+    const received = Math.min(due, remainingReceived);
+    remainingReceived -= received;
+    const outstanding = due - received;
+    const cleared = outstanding === 0 || input.clearDifference;
+    updates.push({ id: deposit.id, shiftId: deposit.shiftId, received, outstanding: cleared ? 0 : outstanding, cleared });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const update of updates) {
+      const changed = await tx.cashDeposit.updateMany({
+        where: { id: update.id, status: { in: ["COUNTED", "HANDED_OVER", "DEPOSITED"] } },
+        data: {
+          status: update.cleared ? "CONFIRMED" : "COUNTED",
+          outstandingCents: update.outstanding,
+          receivedCents: { increment: update.received },
+          handedToUserId: ctx.userId,
+          ...(input.differenceNotes?.trim() ? { differenceNotes: input.differenceNotes.trim() } : {}),
+          ...(update.cleared ? { confirmedAt: new Date() } : {}),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictError("Um dos valores já foi atualizado. Recarregue a caixa.");
+    }
+    for (const shiftId of new Set(updates.filter((u) => u.cleared).map((u) => u.shiftId))) {
+      const unsettled = await tx.cashDeposit.count({ where: { shiftId, status: { in: ["COUNTED", "HANDED_OVER", "DEPOSITED"] } } });
+      if (!unsettled) await tx.cashShift.update({ where: { id: shiftId }, data: { status: "RECONCILED" } });
+    }
+  });
+  await writeAudit({
+    organizationId: ctx.organizationId,
+    actorUserId: ctx.userId,
+    action: "cash.deposit_received",
+    after: sanitizeForAudit({ depositIds: updates.map((u) => u.id), receivedCents: input.receivedCents, pendingDifferenceCents: input.clearDifference ? 0 : differenceCents, clearDifference: input.clearDifference, differenceNotes: input.differenceNotes }),
+  });
+  return { depositIds: updates.map((u) => u.id), receivedCents: input.receivedCents, outstandingCents: input.clearDifference ? 0 : differenceCents, status: input.clearDifference || differenceCents === 0 ? "CONFIRMED" : "COUNTED" };
 }

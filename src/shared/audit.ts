@@ -69,6 +69,7 @@ export type AuditAction =
   | "refund.approved"
   | "refund.rejected"
   | "refund.completed"
+  | "refund.escalated"
   | "settlement.prepared"
   | "settlement.approved"
   | "settlement.rejected"

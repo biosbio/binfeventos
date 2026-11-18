@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/shared/lib/prisma";
 import { requireAuth } from "@/shared/auth";
 import { SiteHeader, SiteFooter } from "../../_components/site-shell";
+import TicketCancelAction from "@/app/minha-conta/ticket-cancel-action";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,7 @@ export default async function TicketPage({
           },
         },
         order: { select: { buyerUserId: true, orderNumber: true } },
+        refunds: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, amountCents: true, refundRecipient: true, refundMethod: true, refundPaidAt: true } },
       },
     });
 
@@ -108,10 +110,11 @@ export default async function TicketPage({
               Titular: {ticket!.orderAttendee?.fullName}
             </p>
             <p className="form-help">
-              {ticket!.ticketNumber} · {TICKET_LABELS[ticket!.status] ?? ticket!.status}
+              {ticket!.ticketNumber} · {ticket!.refunds[0]?.status === "COMPLETED" ? "Reembolso concluído" : ticket!.refunds[0] ? `Cancelamento: ${ticket!.refunds[0].status}` : TICKET_LABELS[ticket!.status] ?? ticket!.status}
               {ticket!.reentryAllowed ? " · Reentrada permitida" : ""}
             </p>
           </div>
+          {ticket!.status === "ISSUED" && new Date() < new Date(ticket!.session.startsAt.getTime() - 3 * 60 * 60 * 1000) ? <div style={{ marginTop: 16 }}><TicketCancelAction ticketId={ticket!.id} ticketNumber={ticket!.ticketNumber} /></div> : null}
 
           {ticket!.ticketType.requiresIdentity ? (
             <p className="notice" style={{ marginTop: 14, textAlign: "left" }}>
@@ -124,6 +127,7 @@ export default async function TicketPage({
             Encomenda {ticket!.order.orderNumber} · Cada consulta deste QR
             gera um código novo — o anterior deixa de funcionar.
           </p>
+          <p className="form-help">Pedidos de cancelamento podem ser feitos até 3 horas antes do espetáculo. Reembolsos aprovados podem levar até 48 horas após a aprovação final.</p>
         </div>
       </main>
       <SiteFooter />

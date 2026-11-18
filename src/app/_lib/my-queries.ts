@@ -10,6 +10,8 @@ import { requireAuth } from "@/shared/auth";
 
 /** Encomendas do utilizador autenticado (comprador). */
 export async function listMyOrders(userId: string) {
+  const { escalateStaleTicketCancellations } = await import("@/modules/finance/ticket-cancellations");
+  await escalateStaleTicketCancellations();
   return prisma.order.findMany({
     where: { buyerUserId: userId },
     select: {
@@ -33,6 +35,8 @@ export async function listMyOrders(userId: string) {
           ticketNumber: true,
           status: true,
           orderAttendee: { select: { fullName: true } },
+          session: { select: { startsAt: true } },
+          refunds: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, status: true, reason: true, amountCents: true, createdAt: true, refundMethod: true, refundPaidAt: true, refundRecipient: true } },
         },
       },
     },
