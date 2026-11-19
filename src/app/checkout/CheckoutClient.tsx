@@ -378,7 +378,9 @@ export default function CheckoutClient() {
             <p className="checkout-payment-note">
               Encomenda {order.orderNumber}. O total corresponde ao preço definido
               para os bilhetes, sem taxa de serviço para o comprador. Os bilhetes
-              são emitidos apenas após confirmação do pagamento.
+              são emitidos apenas após confirmação do pagamento. O pedido de cancelamento
+              pode ser feito até 3 horas antes do espetáculo. Reembolsos aprovados passam
+              por validação da plataforma e podem levar até 48 horas após a aprovação final.
             </p>
             <button className="button button-lime" style={{ width: "100%" }} onClick={startPayment} disabled={loading || paymentOptionsLoading || paymentOptions.length === 0}>
               {loading ? "A iniciar…" : "Continuar para pagamento"}

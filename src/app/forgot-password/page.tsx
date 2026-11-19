@@ -4,12 +4,12 @@ import Link from "next/link";
 import BrandLogo from "../_components/brand-logo";
 import { useState } from "react";
 
-type Method = "EMAIL" | "SMS" | "TOTP";
-
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
-  const [method, setMethod] = useState<Method>("EMAIL");
+  const [methods, setMethods] = useState<string[] | null>(null);
+  const [requireTotp, setRequireTotp] = useState(false);
   const [code, setCode] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [ready, setReady] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -17,10 +17,27 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  async function findMethods() {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/users/password-recovery-options", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message ?? "Não foi possível continuar.");
+      setMethods(data.methods as string[]);
+      setRequireTotp(Boolean(data.requireTotp));
+      setReady(false); setCode(""); setTotpCode("");
+      if (data.requireTotp) setNotice("Esta conta recupera o acesso apenas com a aplicação autenticadora.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao consultar métodos de recuperação.");
+    } finally { setBusy(false); }
+  }
+
   async function requestCode() {
     setBusy(true); setError(""); setNotice("");
     try {
-      if (method === "TOTP") {
+      if (requireTotp) {
         setReady(true);
         setNotice("Introduza o código atual da aplicação autenticadora do administrador.");
         return;
@@ -28,7 +45,7 @@ export default function ForgotPasswordPage() {
       const response = await fetch("/api/users/password-recovery-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, channel: method }),
+        body: JSON.stringify({ email }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message ?? "Não foi possível solicitar a recuperação.");
@@ -48,7 +65,7 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({
           email,
           newPassword,
-          ...(method === "TOTP" ? { totpCode: code } : { code }),
+          ...(requireTotp ? { totpCode } : { code }),
         }),
       });
       const data = await response.json();
@@ -65,7 +82,7 @@ export default function ForgotPasswordPage() {
       <section className="auth-card">
         <span className="brand"><BrandLogo /></span>
         <h1>Recuperar password</h1>
-        <p>Confirme a sua identidade usando um contacto já associado à conta ou a aplicação autenticadora do administrador.</p>
+        <p>Utilizadores e organizadores recebem um código por email. Administradores confirmam com a aplicação autenticadora.</p>
         {error ? <div className="form-error" role="alert">{error}</div> : null}
         {notice ? <div className="form-success" role="status">{notice}</div> : null}
         {completed ? (
@@ -74,31 +91,30 @@ export default function ForgotPasswordPage() {
           <>
             <div className="form-field">
               <label htmlFor="recovery-email">Email cadastrado</label>
-              <input id="recovery-email" type="email" autoComplete="email" required value={email} onChange={e => { setEmail(e.target.value); setReady(false); }} />
+              <input id="recovery-email" type="email" autoComplete="email" required value={email} onChange={e => { setEmail(e.target.value); setMethods(null); setRequireTotp(false); setReady(false); }} />
             </div>
-            <div className="form-field">
-              <label htmlFor="recovery-method">Método de confirmação</label>
-              <select id="recovery-method" value={method} onChange={e => { setMethod(e.target.value as Method); setReady(false); setCode(""); setNotice(""); }}>
-                <option value="EMAIL">Email cadastrado (organizador ou utilizador)</option>
-                <option value="SMS">Telemóvel cadastrado (utilizador comum)</option>
-                <option value="TOTP">Aplicação autenticadora (administrador)</option>
-              </select>
-            </div>
-            {!ready ? (
-              <button className="button button-primary" type="button" disabled={busy || !email} onClick={requestCode}>{busy ? "A processar…" : method === "TOTP" ? "Continuar com MFA" : "Enviar código"}</button>
+            {!methods ? (
+              <button className="button button-primary" type="button" disabled={busy || !email} onClick={findMethods}>{busy ? "A verificar…" : "Continuar"}</button>
             ) : (
-              <form onSubmit={confirm}>
-                <div className="form-field">
-                  <label htmlFor="recovery-code">{method === "TOTP" ? "Código MFA (6 dígitos)" : "Código recebido (6 dígitos)"}</label>
+              <>
+                {!ready ? (
+                  <button className="button button-primary" type="button" disabled={busy} onClick={requestCode}>{busy ? "A processar…" : requireTotp ? "Continuar com MFA" : "Enviar código por email"}</button>
+                ) : <form onSubmit={confirm}>
+                {requireTotp ? <div className="form-field">
+                  <label htmlFor="recovery-totp">Código MFA da aplicação autenticadora</label>
+                  <input id="recovery-totp" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={totpCode} onChange={e => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+                </div> : <div className="form-field">
+                  <label htmlFor="recovery-code">Código enviado por email</label>
                   <input id="recovery-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
-                </div>
+                </div>}
                 <div className="form-field">
                   <label htmlFor="new-password">Nova password</label>
                   <input id="new-password" type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-                  <span className="form-help">Mínimo de 12 caracteres, com maiúscula, minúscula e número.</span>
+                  <span className="form-help">{requireTotp ? "Administrador: mínimo de 9 caracteres, com maiúscula, minúscula, número e símbolo." : "Mínimo de 12 caracteres, com maiúscula, minúscula e número."}</span>
                 </div>
-                <button className="button button-primary" type="submit" disabled={busy || code.length !== 6}>{busy ? "A atualizar…" : "Confirmar e alterar password"}</button>
-              </form>
+                <button className="button button-primary" type="submit" disabled={busy || (requireTotp ? totpCode.length !== 6 : code.length !== 6)}>{busy ? "A atualizar…" : "Confirmar e alterar password"}</button>
+                </form>}
+              </>
             )}
           </>
         )}

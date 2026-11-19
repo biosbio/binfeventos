@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { SiteHeader, SiteFooter } from "../_components/site-shell";
 import { getMyContext, listMyOrders } from "../_lib/my-queries";
 import { listPublicEvents } from "../_lib/public-queries";
+import TicketCancelAction from "./ticket-cancel-action";
+import MfaEnrollment from "./mfa-enrollment";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +28,15 @@ const TICKET_LABELS: Record<string, string> = {
   CANCELLED: "Cancelado",
   EXPIRED: "Expirado",
   REVOKED: "Revogado",
+};
+const REFUND_LABELS: Record<string, string> = {
+  SELLER_REVIEW: "Pedido recebido · análise do vendedor",
+  ORGANIZER_REVIEW: "Em análise do organizador",
+  PLATFORM_REVIEW: "Em análise da plataforma",
+  PROCESSING: "Reembolso em processamento",
+  REFUND_AWAITING_PLATFORM_CONFIRMATION: "Reembolso efetuado · confirmação da plataforma pendente",
+  COMPLETED: "Reembolso concluído",
+  REJECTED: "Pedido de cancelamento rejeitado",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -68,6 +79,8 @@ export default async function MyAccountPage() {
         <p className="section-copy" style={{ maxWidth: "none" }}>
           As suas encomendas e bilhetes digitais.
         </p>
+
+        <MfaEnrollment initiallyEnabled={user.mfaEnabled} adminAccessPending={user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled} />
 
         <h2 style={{ marginTop: 30 }}>As minhas compras e bilhetes</h2>
         {orders.length === 0 ? (
@@ -116,14 +129,26 @@ export default async function MyAccountPage() {
                         <div>
                           <strong style={{ fontSize: 14 }}>{t.orderAttendee?.fullName}</strong>
                           <div className="form-help" style={{ marginTop: 3 }}>
-                            {t.ticketNumber} · {TICKET_LABELS[t.status] ?? t.status}
+                            {t.ticketNumber} · {t.refunds[0] ? REFUND_LABELS[t.refunds[0].status] ?? t.refunds[0].status : TICKET_LABELS[t.status] ?? t.status}
                           </div>
+                          {t.refunds[0]?.status === "COMPLETED" && t.refunds[0].refundPaidAt ? <div className="form-help">Reembolso de {formatPrice(t.refunds[0].amountCents, order.currency)} para {t.refunds[0].refundRecipient} por {t.refunds[0].refundMethod} em {new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short" }).format(t.refunds[0].refundPaidAt)}.</div> : null}
                         </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                         {t.status === "ISSUED" ? (
                           <Link className="text-link" href={`/bilhetes/${t.id}`}>
                             Ver bilhete e QR →
                           </Link>
                         ) : null}
+                        {t.status === "ISSUED" ? (
+                          Date.now() < t.session.startsAt.getTime() - 3 * 60 * 60 * 1000 ? (
+                            <TicketCancelAction ticketId={t.id} ticketNumber={t.ticketNumber} />
+                          ) : (
+                            <span className="form-help">
+                              Prazo para cancelar encerrado. O pedido precisava ser feito até {new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short" }).format(new Date(t.session.startsAt.getTime() - 3 * 60 * 60 * 1000))}.
+                            </span>
+                          )
+                        ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>

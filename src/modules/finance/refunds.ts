@@ -67,7 +67,7 @@ export async function requestRefund(ctx: AuthContext, input: RequestRefundInput)
     const previousRefunds = await tx.refund.aggregate({
       where: {
         orderId: order.id,
-        status: { in: ["REQUESTED", "UNDER_ANALYSIS", "APPROVED", "PROCESSING", "COMPLETED"] },
+        status: { in: ["REQUESTED", "UNDER_ANALYSIS", "SELLER_REVIEW", "ORGANIZER_REVIEW", "PLATFORM_REVIEW", "APPROVED", "PROCESSING", "REFUND_AWAITING_PLATFORM_CONFIRMATION", "COMPLETED"] },
       },
       _sum: { amountCents: true },
     });
@@ -156,6 +156,7 @@ export async function completeRefund(
 
   const refund = await prisma.refund.findUnique({ where: { id: input.refundId } });
   if (!refund || refund.organizationId !== organizationId) throw new NotFoundError("Reembolso");
+  if (refund.ticketId) throw new BusinessRuleError("Cancelamentos de bilhetes exigem registo do pagamento e confirmação final da plataforma.");
   if (refund.status !== "APPROVED" && refund.status !== "PROCESSING") {
     throw new ConflictError("Apenas reembolsos aprovados podem ser concluídos.");
   }
@@ -243,4 +244,3 @@ export async function completeRefund(
   });
   return { completed: true, fullyRefunded: result.fully };
 }
-

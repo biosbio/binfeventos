@@ -118,6 +118,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, ...result });
     }
 
+    if (path === "deposits/confirm") {
+      const auth = await requirePanelAuth();
+      const body = parse(z.object({ depositId: z.string().uuid(), password: z.string().min(1), receivedCents: z.number().int().min(0), clearDifference: z.boolean().default(false), differenceNotes: z.string().trim().max(500).optional() }), await req.json());
+      const { verifyOrganizerPanelPassword } = await import("@/modules/users/panel-auth");
+      await verifyOrganizerPanelPassword(auth, body.password);
+      const { confirmCashDeposit } = await import("@/modules/boxoffice/service");
+      const result = await confirmCashDeposit(auth, body);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
+    if (path === "deposits/confirm-batch") {
+      const auth = await requirePanelAuth();
+      const body = parse(z.object({ depositIds: z.array(z.string().uuid()).min(1).max(100), password: z.string().min(1), receivedCents: z.number().int().min(0), clearDifference: z.boolean().default(false), differenceNotes: z.string().trim().max(500).optional() }), await req.json());
+      const { verifyOrganizerPanelPassword } = await import("@/modules/users/panel-auth");
+      await verifyOrganizerPanelPassword(auth, body.password);
+      const { confirmCashDeposits } = await import("@/modules/boxoffice/service");
+      const result = await confirmCashDeposits(auth, body);
+      return NextResponse.json({ ok: true, ...result });
+    }
+
     if (path === "shifts/movement") {
       const auth = await requirePanelAuth();
       const body = parse((await import("@/modules/boxoffice/schemas")).cashMovementSchema, await req.json());

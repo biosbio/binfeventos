@@ -84,6 +84,10 @@ export async function getAuthContext(): Promise<AuthContext | null> {
   if (session.revokedAt || session.expiresAt < new Date()) return null;
   if (session.user.status !== "ACTIVE") return null;
 
+  // A designado a administrador só recebe privilégios de plataforma depois
+  // de concluir a configuração do seu próprio MFA.
+  const platformAdminActive = session.user.platformRole === "PLATFORM_ADMIN" && session.user.mfaEnabled;
+
   // Permissões limitadas à organização ativa da sessão (ABAC).
   // Nunca agregar permissões de organizações diferentes.
   const permissions = new Set<string>();
@@ -114,7 +118,7 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     }
   }
 
-  if (session.user.platformRole === "PLATFORM_ADMIN") {
+  if (platformAdminActive) {
     permissions.add("admin:platform");
     permissions.add("subscription:manage");
     permissions.add("audit:read");
@@ -126,7 +130,7 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     organizationId: session.organizationId,
     permissions,
     mfaEnabled: session.user.mfaEnabled,
-    platformRole: session.user.platformRole,
+    platformRole: platformAdminActive ? "PLATFORM_ADMIN" : "USER",
     sessionId: session.id,
     panelVerifiedUntil: session.panelVerifiedUntil,
   };

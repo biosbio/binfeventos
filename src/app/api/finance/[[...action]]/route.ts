@@ -55,6 +55,31 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       return NextResponse.json({ ok: true, ...result });
     }
 
+    if (path.startsWith("refunds/ticket-cancellation/")) {
+      const authModule = await import("@/shared/auth");
+      const auth = path.endsWith("/request") ? await authModule.requireAuth() : await authModule.requirePanelAuth();
+      const service = await import("@/modules/finance/ticket-cancellations");
+      if (path === "refunds/ticket-cancellation/request") {
+        const body = parse(z.object({ ticketId: z.string().uuid(), password: z.string().min(1), reason: z.string().trim().min(5).max(500) }), await req.json());
+        return NextResponse.json({ ok: true, ...await service.requestTicketCancellation(auth, body) }, { status: 201 });
+      }
+      if (path === "refunds/ticket-cancellation/seller-review" || path === "refunds/ticket-cancellation/organizer-review" || path === "refunds/ticket-cancellation/platform-review") {
+        const body = parse(z.object({ refundId: z.string().uuid(), decision: z.enum(["APPROVE", "REJECT"]), notes: z.string().trim().min(3).max(500) }), await req.json());
+        const result = path.endsWith("seller-review") ? await service.reviewCancellationAsSeller(auth, body)
+          : path.endsWith("organizer-review") ? await service.reviewCancellationAsOrganizer(auth, body)
+          : await service.reviewCancellationAsPlatform(auth, body);
+        return NextResponse.json({ ok: true, ...result });
+      }
+      if (path === "refunds/ticket-cancellation/execution") {
+        const body = parse(z.object({ refundId: z.string().uuid(), recipient: z.string().trim().min(3).max(160), method: z.string().trim().min(2).max(80), paidAt: z.coerce.date(), evidenceRef: z.string().trim().max(300).optional(), evidenceNotes: z.string().trim().min(10).max(1000) }), await req.json());
+        return NextResponse.json({ ok: true, ...await service.recordRefundExecution(auth, body) });
+      }
+      if (path === "refunds/ticket-cancellation/platform-confirm") {
+        const body = parse(z.object({ refundId: z.string().uuid() }), await req.json());
+        return NextResponse.json({ ok: true, ...await service.confirmRefundByPlatform(auth, body.refundId) });
+      }
+    }
+
     if (path === "settlements/prepare") {
       const auth = await requirePermission("settlement:prepare");
       const body = parse((await import("@/modules/finance/schemas")).prepareSettlementSchema, await req.json());

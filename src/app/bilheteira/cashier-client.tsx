@@ -490,6 +490,9 @@ export default function CashierClient({
               required
             />
           </label>
+          {Math.round(Number(countedCash || 0) * 100) !== activeShift.expectedCents ? (
+            <p className="form-error" role="alert">Há uma diferença entre o esperado e o contado. Ela ficará pendente para o organizador decidir após receber o valor e conversar pessoalmente com o vendedor.</p>
+          ) : null}
           <label className="cashier-field">
             <span>Notas sobre diferenças</span>
             <input value={differenceNotes} onChange={(event) => setDifferenceNotes(event.target.value)} />

@@ -40,7 +40,7 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
           ...(submittedTotp ? { totpCode: submittedTotp } : {}),
         }),
       });
-      const data = (await res.json()) as { code?: string; message?: string; isAdmin?: boolean };
+      const data = (await res.json()) as { code?: string; message?: string; isAdmin?: boolean; mfaSetupRequired?: boolean };
       if (!res.ok) {
         if (data.code === "MFA_REQUIRED") {
           setNeedsMfa(true);
@@ -48,6 +48,10 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
           return;
         }
         setError(data.message ?? "Não foi possível entrar.");
+        return;
+      }
+      if (data.mfaSetupRequired) {
+        window.location.href = "/minha-conta?ativar-mfa=1";
         return;
       }
       window.location.href = nextPath === "/" && data.isAdmin ? "/admin" : nextPath;

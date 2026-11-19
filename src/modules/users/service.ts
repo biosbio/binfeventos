@@ -8,8 +8,9 @@ import {
   decryptMfaSecret,
   isEncryptedMfaSecret,
 } from "@/shared/lib/security";
-import { AppError, BusinessRuleError, ConflictError, ForbiddenError, UnauthorizedError } from "@/shared/errors";
+import { AppError, BusinessRuleError, ConflictError, UnauthorizedError } from "@/shared/errors";
 import { createSession, revokeCurrentSession } from "@/shared/auth";
+import { writeAudit } from "@/shared/audit";
 import type { LoginInput, RegisterInput } from "./schemas";
 
 // ============================================================
@@ -44,8 +45,8 @@ export async function registerUser(input: RegisterInput, ip?: string): Promise<{
   return user;
 }
 
-/** Autentica e cria a sessão (com MFA obrigatório para administradores). */
-export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean; isAdmin: boolean }> {
+/** Autentica; administradores ativos usam MFA e os designados completam a configuração após login. */
+export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRequired: boolean; isAdmin: boolean; mfaSetupRequired: boolean }> {
   // Rate limit por IP+email: 10 tentativas por minuto (SEC-05)
   if (
     await rateLimit(`login:ip:${ip ?? "unknown"}`, 30, 15 * 60 * 1000) ||
@@ -66,15 +67,12 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
     throw new AppError("ACCOUNT_SUSPENDED", 403, "Conta suspensa ou encerrada.");
   }
 
-  // Administrador da plataforma nunca pode autenticar sem MFA ativo.
-  if (user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled) {
-    throw new AppError("MFA_MISCONFIGURED", 500, "MFA obrigatório do administrador não está ativo. Contacte o suporte.");
-  }
-  if (user.platformRole === "PLATFORM_ADMIN" && !process.env.MFA_ENCRYPTION_KEY) {
+  const mfaSetupRequired = user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled;
+  if (user.platformRole === "PLATFORM_ADMIN" && user.mfaEnabled && !process.env.MFA_ENCRYPTION_KEY) {
     throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 500, "Configure MFA_ENCRYPTION_KEY para proteger o segredo TOTP.");
   }
 
-  if (user.platformRole === "PLATFORM_ADMIN") {
+  if (user.platformRole === "PLATFORM_ADMIN" && user.mfaEnabled) {
     if (!user.mfaSecret) {
       throw new AppError("MFA_MISCONFIGURED", 500, "MFA mal configurado. Contacte o suporte.");
     }
@@ -101,9 +99,13 @@ export async function loginUser(input: LoginInput, ip?: string): Promise<{ mfaRe
   await createSession(
     user.id,
     membership?.organizationId ?? null,
-    user.platformRole === "PLATFORM_ADMIN",
+    user.platformRole === "PLATFORM_ADMIN" && user.mfaEnabled,
   );
-  return { mfaRequired: false, isAdmin: user.platformRole === "PLATFORM_ADMIN" };
+  return {
+    mfaRequired: false,
+    isAdmin: user.platformRole === "PLATFORM_ADMIN" && user.mfaEnabled,
+    mfaSetupRequired,
+  };
 }
 
 /** Inicia ativação de MFA: gera segredo + URL otpauth (QR a ler na app). */
@@ -114,12 +116,9 @@ export async function beginEnableMfa(userId: string): Promise<{
   const secret = authenticator.generateSecret();
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { email: true, mfaEnabled: true, platformRole: true },
+    select: { email: true, mfaEnabled: true },
   });
   if (!user) throw new UnauthorizedError();
-  if (user.platformRole !== "PLATFORM_ADMIN") {
-    throw new ForbiddenError("MFA disponível apenas para administradores da plataforma.");
-  }
   if (user.mfaEnabled) {
     throw new BusinessRuleError("MFA já está ativo. Não é permitido substituir o segredo sem um fluxo de recuperação.");
   }
@@ -141,11 +140,8 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
   }
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { mfaSecret: true, mfaEnabled: true, platformRole: true },
+    select: { mfaSecret: true, mfaEnabled: true },
   });
-  if (user?.platformRole !== "PLATFORM_ADMIN") {
-    throw new ForbiddenError("MFA disponível apenas para administradores da plataforma.");
-  }
   if (!user?.mfaSecret) {
     throw new BusinessRuleError("Ative o MFA antes de confirmar.");
   }
@@ -153,6 +149,12 @@ export async function confirmEnableMfa(userId: string, totpCode: string): Promis
     throw new AppError("INVALID_MFA_CODE", 422, "Código inválido. Tente novamente.");
   }
   await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
+  const auditOrganization = await prisma.organization.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true } });
+  if (auditOrganization) {
+    await writeAudit({ organizationId: auditOrganization.id, actorUserId: userId, action: "auth.mfa_enabled", after: { mfaEnabled: true } });
+  } else {
+    console.log("[audit] auth.mfa_enabled", { userId });
+  }
 }
 
 /** Logout: revoga a sessão atual. */

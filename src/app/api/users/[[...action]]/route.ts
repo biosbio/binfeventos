@@ -30,8 +30,9 @@ function parseBody<T>(schema: z.ZodType<T>, data: unknown): T {
   return result.data;
 }
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
-  const { action } = await ctx.params;
+export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: string[] }> }) {
+  const { action: segments = [] } = await ctx.params;
+  const action = segments.join("/");
 
   try {
     switch (action) {
@@ -90,8 +91,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       case "password-recovery-start": {
         const body = parseBody((await import("@/modules/users/schemas")).passwordRecoveryStartSchema, await req.json());
         const { startPasswordRecovery } = await import("@/modules/users/password-recovery");
-        await startPasswordRecovery(body.email, body.channel, clientIp(req));
+        await startPasswordRecovery(body.email, clientIp(req));
         return NextResponse.json({ ok: true, message: "Se a conta e o método forem elegíveis, receberá instruções para recuperar o acesso." });
+      }
+
+      case "password-recovery-options": {
+        const body = parseBody(z.object({ email: z.string().trim().toLowerCase().email() }), await req.json());
+        const { getPasswordRecoveryMethods } = await import("@/modules/users/password-recovery");
+        const options = await getPasswordRecoveryMethods(body.email, clientIp(req));
+        return NextResponse.json({ ok: true, ...options });
       }
 
       case "password-recovery-confirm": {

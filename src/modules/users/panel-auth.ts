@@ -26,7 +26,24 @@ export async function deliverEmail(to: string, code: string, subject = "Código 
       text: `O seu código de acesso é ${code}. É válido por ${validityMinutes} minutos e só pode ser utilizado uma vez.`,
     }),
   });
-  if (!response.ok) throw new AppError("EMAIL_DELIVERY_FAILED", 502, "Não foi possível enviar o código por email.");
+  if (!response.ok) {
+    let providerCode: string | undefined;
+    let providerMessage: string | undefined;
+    try {
+      const result = await response.json() as { name?: string; code?: string; message?: string };
+      providerCode = result.name ?? result.code;
+      providerMessage = result.message;
+    } catch { /* resposta do fornecedor sem JSON */ }
+    console.error("[email] Resend delivery failed", { status: response.status, code: providerCode });
+    const message = response.status === 401
+      ? "O Resend recusou a chave de API. Verifique RESEND_API_KEY e reinicie o servidor."
+      : response.status === 403
+        ? `O Resend recusou o envio (HTTP 403${providerCode ? `, ${providerCode}` : ""}). ${providerMessage ?? "Verifique o remetente e as permissões da chave na conta Resend."}`
+        : response.status === 429
+          ? "O limite de envio do Resend foi atingido. Aguarde e tente novamente."
+          : `O Resend recusou o email (HTTP ${response.status}${providerCode ? `, código ${providerCode}` : ""})${providerMessage ? `: ${providerMessage}` : "."}`;
+    throw new AppError("EMAIL_DELIVERY_FAILED", 502, message);
+  }
 }
 
 export async function deliverSms(to: string, code: string, purpose = "acesso ao painel", validityMinutes = 5): Promise<void> {
@@ -52,7 +69,25 @@ export async function deliverSms(to: string, code: string, purpose = "acesso ao 
     },
     body,
   });
-  if (!response.ok) throw new AppError("SMS_DELIVERY_FAILED", 502, "Não foi possível enviar o código por SMS.");
+  if (!response.ok) {
+    let twilioCode: number | undefined;
+    try {
+      const result = await response.json() as { code?: number };
+      twilioCode = result.code;
+    } catch { /* resposta do fornecedor sem JSON */ }
+    const messages: Record<number, string> = {
+      20003: "Twilio recusou a autenticação. Verifique Account SID e Auth Token.",
+      21211: "O número de destino não é válido. Use o formato internacional +indicativo.",
+      21606: "O remetente configurado não é válido para esta conta Twilio.",
+      21608: "A conta Twilio de teste só pode enviar para números previamente verificados.",
+      21614: "O número de destino não é um número móvel válido para SMS.",
+    };
+    const knownMessage = twilioCode === undefined ? undefined : messages[twilioCode];
+    const message = knownMessage
+      ? knownMessage
+      : `Twilio recusou o envio do SMS (HTTP ${response.status}${twilioCode ? `, código ${twilioCode}` : ""}). Verifique o remetente, saldo e permissões de envio.`;
+    throw new AppError("SMS_DELIVERY_FAILED", 502, message);
+  }
 }
 
 /** Organizador confirma a password antes de abrir o painel. */

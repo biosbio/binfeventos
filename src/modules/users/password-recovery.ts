@@ -3,7 +3,8 @@ import { authenticator } from "otplib";
 import { prisma } from "@/shared/lib/prisma";
 import { AppError, UnauthorizedError } from "@/shared/errors";
 import { decryptMfaSecret, hashPassword, rateLimit, sha256, safeEqual } from "@/shared/lib/security";
-import { deliverEmail, deliverSms } from "./panel-auth";
+import { adminPasswordSchema, passwordSchema } from "./schemas";
+import { deliverEmail } from "./panel-auth";
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -25,7 +26,7 @@ async function findAccountType(email: string) {
 }
 
 /** Starts recovery without disclosing whether an email is registered. */
-export async function startPasswordRecovery(email: string, channel: "EMAIL" | "SMS", ip: string) {
+export async function startPasswordRecovery(email: string, ip: string) {
   if (await rateLimit(`password-reset:ip:${ip}`, 10, 15 * 60 * 1000) ||
       await rateLimit(`password-reset:email:${email}`, 5, 15 * 60 * 1000)) {
     throw new AppError("RATE_LIMITED", 429, "Demasiados pedidos. Aguarde antes de tentar novamente.");
@@ -33,11 +34,6 @@ export async function startPasswordRecovery(email: string, channel: "EMAIL" | "S
 
   const user = await findAccountType(email);
   if (!user || user.platformRole === "PLATFORM_ADMIN") return;
-
-  const isOrganizer = user.memberships.length > 0;
-  // Resposta silenciosa para evitar revelar se a conta existe ou o seu tipo.
-  if (isOrganizer && channel !== "EMAIL") return;
-  if (channel === "SMS" && !user.phone) return;
 
   const recent = await prisma.passwordResetCode.findFirst({
     where: { userId: user.id },
@@ -54,20 +50,28 @@ export async function startPasswordRecovery(email: string, channel: "EMAIL" | "S
     data: { consumedAt: new Date() },
   });
   const record = await prisma.passwordResetCode.create({
-    data: { userId: user.id, codeHash: digest(code), channel, expiresAt: new Date(Date.now() + CODE_TTL_MS) },
+    data: { userId: user.id, codeHash: digest(code), channel: "EMAIL", expiresAt: new Date(Date.now() + CODE_TTL_MS) },
     select: { id: true },
   });
 
   try {
-    if (channel === "EMAIL") {
-      await deliverEmail(user.email, code, "Recuperação da palavra-passe — BINF EVENTOS", 10);
-    } else {
-      await deliverSms(user.phone!, code, "recuperação da palavra-passe", 10);
-    }
+    await deliverEmail(user.email, code, "Recuperação da palavra-passe — BINF EVENTOS", 10);
   } catch (error) {
     await prisma.passwordResetCode.update({ where: { id: record.id }, data: { consumedAt: new Date() } });
     throw error;
   }
+}
+
+/** Returns available recovery methods after the user submits the account email. */
+export async function getPasswordRecoveryMethods(email: string, ip: string): Promise<{ methods: ["EMAIL"] | ["TOTP"]; requireTotp: boolean }> {
+  if (await rateLimit(`password-reset-options:ip:${ip}`, 20, 15 * 60 * 1000) ||
+      await rateLimit(`password-reset-options:email:${email}`, 8, 15 * 60 * 1000)) {
+    throw new AppError("RATE_LIMITED", 429, "Demasiadas tentativas. Aguarde antes de tentar novamente.");
+  }
+  const user = await findAccountType(email);
+  // Mesmo conjunto de métodos para contas existentes e inexistentes.
+  const requireTotp = user?.platformRole === "PLATFORM_ADMIN";
+  return { methods: requireTotp ? ["TOTP"] : ["EMAIL"], requireTotp };
 }
 
 export async function completePasswordRecovery(input: {
@@ -82,27 +86,37 @@ export async function completePasswordRecovery(input: {
   }
 
   const user = await findAccountType(input.email);
+  if (!user) throw new UnauthorizedError();
+  const passwordValidation = (user.platformRole === "PLATFORM_ADMIN" ? adminPasswordSchema : passwordSchema)
+    .safeParse(input.newPassword);
+  if (!passwordValidation.success) {
+    throw new AppError("WEAK_PASSWORD", 422, passwordValidation.error.issues[0]?.message ?? "Password inválida.");
+  }
   let resetCodeId: string | null = null;
-  if (!user || user.platformRole === "PLATFORM_ADMIN" && !input.totpCode) throw new UnauthorizedError();
   if (user.platformRole === "PLATFORM_ADMIN") {
-    if (!user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(input.totpCode ?? "")) {
-      throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
+    const encryptionKey = process.env.MFA_ENCRYPTION_KEY?.trim();
+    if (!encryptionKey || !/^[0-9a-fA-F]{64}$/.test(encryptionKey)) {
+      throw new AppError("MFA_ENCRYPTION_KEY_MISSING", 503, "MFA indisponível: configure a chave original MFA_ENCRYPTION_KEY de 64 caracteres hexadecimais e reinicie o servidor.");
     }
-    if (!authenticator.verify({ token: input.totpCode!, secret: decryptMfaSecret(user.mfaSecret) })) {
-      throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
+    if (input.code || !user.mfaEnabled || !user.mfaSecret || !/^\d{6}$/.test(input.totpCode ?? "")) {
+      throw new AppError("INVALID_RECOVERY_CODE", 401, "Código MFA inválido ou MFA não configurado.");
+    }
+    let mfaSecret: string;
+    try {
+      mfaSecret = decryptMfaSecret(user.mfaSecret);
+    } catch {
+      throw new AppError("MFA_SECRET_UNAVAILABLE", 503, "Não foi possível abrir o segredo MFA. Restaure a mesma MFA_ENCRYPTION_KEY usada quando o MFA do administrador foi configurado.");
+    }
+    if (!authenticator.verify({ token: input.totpCode!, secret: mfaSecret })) {
+      throw new AppError("INVALID_RECOVERY_CODE", 401, "Código MFA inválido ou MFA não configurado.");
     }
   } else {
-    if (!input.code || !/^\d{6}$/.test(input.code)) {
-      throw new AppError("INVALID_RECOVERY_CODE", 401, "Código de recuperação inválido.");
-    }
+    if (!input.code || !/^\d{6}$/.test(input.code) || input.totpCode) throw new UnauthorizedError();
     const record = await prisma.passwordResetCode.findFirst({
-      where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
+      where: { userId: user.id, channel: "EMAIL", consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
       orderBy: { createdAt: "desc" },
     });
     if (!record) throw new AppError("INVALID_RECOVERY_CODE", 401, "Código expirado ou inválido. Solicite outro.");
-    if (user.memberships.length > 0 && record.channel !== "EMAIL") {
-      throw new AppError("INVALID_RECOVERY_CODE", 401, "A recuperação de contas de organizador exige o código enviado por email.");
-    }
     const attempt = await prisma.passwordResetCode.updateMany({
       where: { id: record.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
       data: { attempts: { increment: 1 } },

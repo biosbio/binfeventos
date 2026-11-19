@@ -112,17 +112,19 @@ export default function StationManager({
               <span>Nome do posto</span>
               <input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={100} placeholder="Ex.: Bilheteira principal" required />
             </label>
-            <label className="cashier-field">
-              <span>Evento</span>
-              <select value={eventId} onChange={(inputEvent) => {
-                const nextEventId = inputEvent.target.value;
-                setEventId(nextEventId);
-                const linkedVenueId = selectableEvents.find((item) => item.id === nextEventId)?.sessions.find((session) => session.venueId)?.venueId;
-                setVenueId(linkedVenueId ?? "");
-              }} required>
-                {selectableEvents.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}
-              </select>
-            </label>
+            {selectableEvents.length > 1 ? (
+              <label className="cashier-field">
+                <span>Evento</span>
+                <select value={eventId} onChange={(inputEvent) => {
+                  const nextEventId = inputEvent.target.value;
+                  setEventId(nextEventId);
+                  const linkedVenueId = selectableEvents.find((item) => item.id === nextEventId)?.sessions.find((session) => session.venueId)?.venueId;
+                  setVenueId(linkedVenueId ?? "");
+                }} required>
+                  {selectableEvents.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}
+                </select>
+              </label>
+            ) : null}
             <label className="cashier-field">
               <span>Local do posto</span>
               <input value={location} onChange={(inputEvent) => setLocation(inputEvent.target.value)} minLength={2} maxLength={120} placeholder="Ex.: Entrada principal, portão norte" required />
