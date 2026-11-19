@@ -54,19 +54,17 @@ function formatPrice(cents: number, currency: string): string {
 }
 
 export default async function MyAccountPage() {
-  let user;
-  let orders;
-  let events;
+  let context;
   try {
-    const context = await getMyContext();
-    user = context.user;
-    [orders, events] = await Promise.all([
-      listMyOrders(context.ctx.userId),
-      listPublicEvents(),
-    ]);
+    context = await getMyContext();
   } catch {
     redirect("/login");
   }
+  const { user } = context;
+  const [orders, events] = await Promise.all([
+    listMyOrders(context.ctx.userId),
+    listPublicEvents(),
+  ]);
 
   return (
     <>
@@ -80,7 +78,9 @@ export default async function MyAccountPage() {
           As suas encomendas e bilhetes digitais.
         </p>
 
-        <MfaEnrollment initiallyEnabled={user.mfaEnabled} adminAccessPending={user.platformRole === "PLATFORM_ADMIN" && !user.mfaEnabled} />
+        {user.platformRole === "PLATFORM_ADMIN" ? (
+          <MfaEnrollment initiallyEnabled={user.mfaEnabled} adminAccessPending={!user.mfaEnabled} />
+        ) : null}
 
         <h2 style={{ marginTop: 30 }}>As minhas compras e bilhetes</h2>
         {orders.length === 0 ? (

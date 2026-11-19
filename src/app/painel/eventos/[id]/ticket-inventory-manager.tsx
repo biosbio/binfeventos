@@ -208,7 +208,6 @@ export default function TicketInventoryManager({
                   </div>
                   {ticketType.description ? <p>{ticketType.description}</p> : null}
                 </div>
-                <span className="status-pill">{ticketType.status === "ACTIVE" ? "Ativo" : ticketType.status}</span>
               </div>
               {ticketType.batches.length ? (
                 <ul style={{ marginBottom: 0 }}>

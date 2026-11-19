@@ -15,12 +15,12 @@ export default async function AdminDashboardPage() {
     <main className="container dashboard-page">
       <div className="dashboard-heading"><div><span className="section-kicker">BINF EVENTOS · ADMINISTRAÇÃO CENTRAL</span><h1>Painel administrativo</h1><p>Visão global da plataforma. A gestão de cada organização permanece isolada.</p></div><div className="dashboard-heading-actions"><Link className="button button-secondary" href="/">Área pública</Link><LogoutButton /></div></div>
       <div className="dashboard-stats">
-        <div className="panel"><div className="price-label">Utilizadores</div><div className="price">{users}</div></div>
+        <Link className="panel" href="/admin/users"><div className="price-label">Utilizadores</div><div className="price">{users}</div></Link>
         <div className="panel"><div className="price-label">Organizações</div><div className="price">{organizations}</div></div>
-        <div className="panel"><div className="price-label">Eventos</div><div className="price">{events}</div></div>
-        <div className="panel"><div className="price-label">Rascunhos</div><div className="price">{pendingEvents}</div></div>
+        <Link className="panel" href="/admin/events?estado=upcoming"><div className="price-label">Eventos</div><div className="price">{events}</div></Link>
+        <Link className="panel" href="/admin/events?estado=drafts"><div className="price-label">Rascunhos</div><div className="price">{pendingEvents}</div></Link>
       </div>
-      <div className="admin-dashboard-actions"><Link className="button button-primary" href="/admin/events/new">Criar evento</Link><Link className="button button-secondary" href="/admin/events">Rever propostas ({pendingEvents})</Link><Link className="button button-secondary" href="/admin/reembolsos">Casos de cancelamento</Link><Link className="button button-secondary" href="/admin/users">Gerir utilizadores</Link></div>
+      <div className="admin-dashboard-actions"><Link className="button button-primary" href="/admin/events/new">Criar evento</Link><Link className="button button-secondary" href="/admin/events?estado=drafts">Rever propostas ({pendingEvents})</Link><Link className="button button-secondary" href="/admin/reembolsos">Casos de cancelamento</Link></div>
     </main>
   );
 }

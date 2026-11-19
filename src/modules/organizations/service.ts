@@ -289,32 +289,48 @@ export async function getBoxOfficeSellerInvite(token: string) {
 }
 
 export async function requestBoxOfficeSellerAccess(ctx: AuthContext, token: string): Promise<"pending" | "approved"> {
-  const invite = await getBoxOfficeSellerInvite(token);
-  const role = await prisma.role.findFirst({
-    where: { name: "BOX_OFFICE_OPERATOR", isSystem: true, organizationId: null },
-    select: { id: true },
-  });
-  if (!role) throw new BusinessRuleError("Papel de vendedor em falta — execute o seed.");
+  const tokenHash = sha256(token);
+  const invite = await prisma.$transaction(async (tx) => {
+    const currentInvite = await tx.boxOfficeSellerInvite.findFirst({
+      where: {
+        tokenHash,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+        organization: { status: "ACTIVE" },
+      },
+      select: { id: true, organizationId: true },
+    });
+    if (!currentInvite) throw new NotFoundError("Convite");
 
-  const existing = await prisma.orgMembership.findUnique({
-    where: { organizationId_userId: { organizationId: invite.organizationId, userId: ctx.userId } },
-    select: { id: true, acceptedAt: true, role: { select: { name: true } } },
-  });
-  if (existing) {
-    if (existing.role.name !== "BOX_OFFICE_OPERATOR") {
-      throw new ConflictError("Já existe uma associação diferente com esta organização.");
-    }
-    return existing.acceptedAt ? "approved" : "pending";
-  }
+    const role = await tx.role.findFirst({
+      where: { name: "BOX_OFFICE_OPERATOR", isSystem: true, organizationId: null },
+      select: { id: true },
+    });
+    if (!role) throw new BusinessRuleError("Papel de vendedor em falta — execute o seed.");
 
-  await prisma.orgMembership.create({
-    data: {
-      organizationId: invite.organizationId,
-      userId: ctx.userId,
-      roleId: role.id,
-      acceptedAt: null,
-    },
+    const existing = await tx.orgMembership.findUnique({
+      where: { organizationId_userId: { organizationId: currentInvite.organizationId, userId: ctx.userId } },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictError("Já possui uma associação com esta organização.");
+
+    const consumed = await tx.boxOfficeSellerInvite.updateMany({
+      where: { id: currentInvite.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (consumed.count !== 1) throw new NotFoundError("Convite");
+
+    await tx.orgMembership.create({
+      data: {
+        organizationId: currentInvite.organizationId,
+        userId: ctx.userId,
+        roleId: role.id,
+        acceptedAt: null,
+      },
+    });
+    return currentInvite;
   });
+
   await writeAudit({
     organizationId: invite.organizationId,
     actorUserId: ctx.userId,

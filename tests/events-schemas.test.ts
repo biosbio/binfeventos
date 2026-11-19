@@ -40,7 +40,7 @@ describe("createEventSchema", () => {
     expect(
       createEventSchema.safeParse({
         name: "Show BINF",
-        coverImageUrl: "/uploads/event-covers/2d9bf441-6408-4efb-9eb3-9cb1226bd2ef.webp",
+        coverImageUrl: "/assets/event-covers/2d9bf441-6408-4efb-9eb3-9cb1226bd2ef.webp",
       }).success
     ).toBe(true);
   });

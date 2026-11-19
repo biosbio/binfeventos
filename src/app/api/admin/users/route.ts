@@ -139,6 +139,11 @@ export async function PATCH(req: NextRequest) {
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.platformRole !== undefined ? { platformRole: input.platformRole } : {}),
       ...(roleChanged && input.platformRole === "PLATFORM_ADMIN" && !existing.mfaEnabled ? { mfaEnabled: false } : {}),
+      // Despromover remove o segredo MFA anterior. Se a conta voltar a ser
+      // designada administradora, terá de registar um novo autenticador.
+      ...(roleChanged && input.platformRole === "USER" && existing.platformRole === "PLATFORM_ADMIN"
+        ? { mfaEnabled: false, mfaSecret: null }
+        : {}),
     };
 
     const auditOrganization = await prisma.organization.findFirst({

@@ -23,7 +23,7 @@ export const eventCategorySchema = z.enum([
 ]);
 
 const coverImageUrlSchema = z.string().max(2000).refine((value) => {
-  if (/^\/uploads\/event-covers\/[0-9a-f-]+\.(?:jpg|png|webp)$/i.test(value)) return true;
+  if (/^\/(?:assets|uploads)\/event-covers\/[0-9a-f-]+\.(?:jpg|png|webp)$/i.test(value)) return true;
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";

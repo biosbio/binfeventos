@@ -116,8 +116,39 @@ export async function getEventStaffInvite(token: string) {
 }
 
 export async function claimEventStaffInvite(ctx: AuthContext, token: string) {
-  const invite = await getEventStaffInvite(token);
+  const tokenHash = sha256(token);
   const membership = await prisma.$transaction(async (tx) => {
+    const invite = await tx.eventStaffInvite.findFirst({
+      where: {
+        tokenHash,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+        event: {
+          status: { notIn: ["CANCELLED", "COMPLETED", "CLOSED"] },
+          organization: { status: "ACTIVE" },
+        },
+      },
+      select: {
+        id: true,
+        eventId: true,
+        role: true,
+        event: { select: { organizationId: true } },
+      },
+    });
+    if (!invite) throw new NotFoundError("Convite");
+
+    const existing = await tx.eventStaffMembership.findUnique({
+      where: { eventId_userId_role: { eventId: invite.eventId, userId: ctx.userId, role: invite.role } },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictError("Já possui este acesso ao evento.");
+
+    const consumed = await tx.eventStaffInvite.updateMany({
+      where: { id: invite.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (consumed.count !== 1) throw new NotFoundError("Convite");
+
     const session = await tx.session.updateMany({
       where: {
         id: ctx.sessionId,
@@ -125,14 +156,12 @@ export async function claimEventStaffInvite(ctx: AuthContext, token: string) {
         revokedAt: null,
         expiresAt: { gt: new Date() },
       },
-      data: { organizationId: invite.organizationId },
+        data: { organizationId: invite.event.organizationId },
     });
     if (session.count !== 1) throw new UnauthorizedError();
 
-    return tx.eventStaffMembership.upsert({
-      where: { eventId_userId_role: { eventId: invite.eventId, userId: ctx.userId, role: invite.role } },
-      update: {},
-      create: {
+    const member = await tx.eventStaffMembership.create({
+      data: {
         eventId: invite.eventId,
         userId: ctx.userId,
         inviteId: invite.id,
@@ -140,17 +169,18 @@ export async function claimEventStaffInvite(ctx: AuthContext, token: string) {
       },
       select: { id: true, role: true, approvedAt: true },
     });
+    return { membership: member, invite };
   });
 
-  if (!membership.approvedAt) {
+  if (!membership.membership.approvedAt) {
     await writeAudit({
-      organizationId: invite.organizationId,
+      organizationId: membership.invite.event.organizationId,
       actorUserId: ctx.userId,
       action: "event.staff_access_requested",
-      after: { eventId: invite.eventId, inviteId: invite.id, role: invite.role },
+      after: { eventId: membership.invite.eventId, inviteId: membership.invite.id, role: membership.invite.role },
     });
   }
-  return membership.approvedAt ? "approved" : "pending";
+  return membership.membership.approvedAt ? "approved" : "pending";
 }
 
 export async function approveEventStaffMember(
