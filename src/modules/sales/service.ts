@@ -132,7 +132,11 @@ export async function createOrder(
   });
   const ticketType = await prisma.ticketType.findUnique({
     where: { id: hold.ticketTypeId },
-    select: { basePriceCents: true, currency: true },
+    select: {
+      basePriceCents: true,
+      currency: true,
+      event: { select: { paymentAgreement: { select: { mode: true, value: true } } } },
+    },
   });
   if (!batch || !ticketType) throw new NotFoundError("Catálogo do lote/tipo");
 
@@ -151,7 +155,14 @@ export async function createOrder(
   const lineSubtotalCents = unitPriceCents * hold.quantity;
   const subtotalCents = lineSubtotalCents;
   const serviceFeeCents = 0;
-  const commissionCents = 0;
+  const agreement = ticketType.event.paymentAgreement;
+  const commissionCents = agreement?.mode === "PERCENTAGE"
+    ? Math.round((subtotalCents * agreement.value) / 10_000)
+    : agreement?.mode === "TICKET_DISCOUNT"
+      ? Math.min(subtotalCents, agreement.value * hold.quantity)
+      // Pacote fixo é apenas um valor registado a pagar pelo organizador.
+      // Nunca é descontado automaticamente das vendas.
+      : 0;
   const taxCents = 0; // regra fiscal por mercado — Domínio 5 (Parte 14)
   const totalCents = subtotalCents + taxCents;
 

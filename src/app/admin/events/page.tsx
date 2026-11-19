@@ -2,25 +2,73 @@ import Link from "next/link";
 import { prisma } from "@/shared/lib/prisma";
 import LogoutButton from "../../_components/logout-button";
 import ProposalActions from "./proposal-actions";
+import EventAdminActions from "./event-admin-actions";
+import PaymentAgreementActions from "./payment-agreement-actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function EventProposalsPage() {
-  const proposals = await prisma.event.findMany({
-    where: { status: "DRAFT" },
+const FILTERS = {
+  upcoming: { label: "A realizar", statuses: ["PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED"] as const },
+  completed: { label: "Realizados", statuses: ["COMPLETED", "CLOSED"] as const },
+  cancelled: { label: "Cancelados", statuses: ["CANCELLED"] as const },
+  drafts: { label: "Propostas", statuses: ["DRAFT"] as const },
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Em análise",
+  PUBLISHED: "Publicado",
+  SUSPENDED: "Suspenso",
+  SOLD_OUT: "Esgotado",
+  POSTPONED: "Adiado",
+  CANCELLED: "Cancelado",
+  COMPLETED: "Realizado",
+  CLOSED: "Encerrado",
+};
+
+type FilterKey = keyof typeof FILTERS;
+
+export default async function AdminEventsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ estado?: string }>;
+}) {
+  const { estado } = await searchParams;
+  const filterKey: FilterKey = estado && estado in FILTERS ? estado as FilterKey : "upcoming";
+  const filter = FILTERS[filterKey];
+  const [events, counts] = await Promise.all([
+    prisma.event.findMany({
+      where: { status: { in: [...filter.statuses] } },
     select: {
       id: true,
       name: true,
       slug: true,
       description: true,
       category: true,
+      status: true,
       createdAt: true,
-      organization: { select: { name: true } },
-      sessions: { select: { startsAt: true, endsAt: true }, orderBy: { startsAt: "asc" } },
+      organization: { select: { name: true, currency: true } },
+      paymentAgreement: { select: { mode: true, value: true, currency: true } },
+      sessions: {
+        select: {
+          startsAt: true,
+          endsAt: true,
+          orders: {
+            where: { status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] } },
+            select: { totalCents: true, commissionCents: true },
+          },
+        },
+        orderBy: { startsAt: "asc" },
+      },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: 100,
-  });
+    }),
+    Promise.all(Object.entries(FILTERS).map(async ([key, value]) => [
+      key,
+      await prisma.event.count({ where: { status: { in: [...value.statuses] } } }),
+    ] as const)),
+  ]);
+  const countsByFilter = Object.fromEntries(counts) as Record<FilterKey, number>;
   const now = new Date();
 
   return (
@@ -28,8 +76,8 @@ export default async function EventProposalsPage() {
       <div className="dashboard-heading">
         <div>
           <span className="section-kicker">ADMINISTRAÇÃO CENTRAL</span>
-          <h1>Propostas de eventos</h1>
-          <p>Os eventos em análise não aparecem ao público. Só ficam visíveis depois da aprovação.</p>
+          <h1>Gestão de eventos</h1>
+          <p>Consulte os eventos por estado e encerre os eventos realizados.</p>
         </div>
         <div className="dashboard-heading-actions">
           <Link className="button button-primary" href="/admin/events/new">Criar evento</Link>
@@ -38,26 +86,50 @@ export default async function EventProposalsPage() {
         </div>
       </div>
 
-      {proposals.length === 0 ? (
-        <div className="empty-state">Não há propostas pendentes de análise.</div>
+      <nav className="admin-dashboard-actions" aria-label="Filtros de eventos">
+        {(Object.entries(FILTERS) as [FilterKey, typeof FILTERS[FilterKey]][]).map(([key, item]) => (
+          <Link key={key} className={`button ${key === filterKey ? "button-primary" : "button-secondary"}`} href={`/admin/events?estado=${key}`}>
+            {item.label} ({countsByFilter[key]})
+          </Link>
+        ))}
+      </nav>
+
+      {events.length === 0 ? (
+        <div className="empty-state">Não há eventos nesta lista.</div>
       ) : (
         <div style={{ display: "grid", gap: 18 }}>
-          {proposals.map((proposal) => {
-            const hasFutureSession = proposal.sessions.some((session) => session.endsAt > now);
+          {events.map((event) => {
+            const hasFutureSession = event.sessions.some((session) => session.endsAt > now);
+            const confirmedOrders = event.sessions.flatMap((session) => session.orders);
+            const soldCents = confirmedOrders.reduce((sum, order) => sum + order.totalCents, 0);
+            const commissionCents = confirmedOrders.reduce((sum, order) => sum + order.commissionCents, 0);
+            const money = (value: number) => new Intl.NumberFormat("pt-PT", {
+              style: "currency", currency: event.paymentAgreement?.currency ?? event.organization.currency,
+            }).format(value / 100);
+            const agreementLabel = event.paymentAgreement?.mode === "FIXED_PACKAGE"
+              ? `Pacote fixo · ${money(event.paymentAgreement.value)}`
+              : event.paymentAgreement?.mode === "PERCENTAGE"
+                ? `Percentagem · ${(event.paymentAgreement.value / 100).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+                : event.paymentAgreement?.mode === "TICKET_DISCOUNT"
+                  ? `Desconto por bilhete · ${money(event.paymentAgreement.value)}`
+                  : "Acordo comercial por definir";
             return (
-              <article className="panel" key={proposal.id}>
-                <span className="section-kicker">{proposal.category}</span>
-                <h2>{proposal.name}</h2>
-                <p className="form-help">Organização: {proposal.organization.name}</p>
-                <p>{proposal.description || "Sem descrição."}</p>
+              <article className="panel admin-event-card" key={event.id}>
+                <span className="section-kicker">{event.category} · {STATUS_LABELS[event.status] ?? event.status}</span>
+                <h2>{event.name}</h2>
+                <div className="admin-event-meta">
+                  <span>Organização: {event.organization.name}</span>
+                  <span><strong>Acordo:</strong> {agreementLabel}</span>
+                </div>
+                <p>{event.description || "Sem descrição."}</p>
                 <p className="form-help">
-                  Submetido em {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long" }).format(proposal.createdAt)}
+                  Criado em {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long" }).format(event.createdAt)}
                   {" · "}
-                  {proposal.sessions.length} sessão(ões)
+                  {event.sessions.length} sessão(ões)
                 </p>
-                {proposal.sessions.length ? (
-                  <ul>
-                    {proposal.sessions.map((session, index) => (
+                {event.sessions.length ? (
+                  <ul className="admin-event-sessions">
+                    {event.sessions.map((session, index) => (
                       <li key={`${session.startsAt.toISOString()}-${index}`}>
                         {new Intl.DateTimeFormat("pt-PT", { dateStyle: "long", timeZone: "UTC" }).format(session.startsAt)}
                         {" — "}
@@ -66,10 +138,27 @@ export default async function EventProposalsPage() {
                     ))}
                   </ul>
                 ) : null}
-                {!hasFutureSession ? (
+                {event.paymentAgreement?.mode === "FIXED_PACKAGE" ? (
+                  <div className="form-help"><strong>Valor acordado a pagar pelo organizador:</strong> {money(event.paymentAgreement.value)}</div>
+                ) : event.paymentAgreement ? (
+                  <div className="form-help">
+                    <strong>Vendas confirmadas:</strong> {money(soldCents)} · {" "}
+                    <strong>Comissão:</strong> {money(commissionCents)} · {" "}
+                    <strong>Valor a receber:</strong> {money(soldCents - commissionCents)}
+                  </div>
+                ) : null}
+                {event.paymentAgreement ? (
+                  <PaymentAgreementActions
+                    eventId={event.id}
+                    initialMode={event.paymentAgreement.mode}
+                    initialValue={event.paymentAgreement.value}
+                  />
+                ) : null}
+                {filterKey === "drafts" && !hasFutureSession ? (
                   <p className="form-help">Não pode aprovar ainda: o organizador precisa adicionar uma sessão futura.</p>
                 ) : null}
-                <ProposalActions eventId={proposal.id} canApprove={hasFutureSession} />
+                {filterKey === "drafts" ? <ProposalActions eventId={event.id} canApprove={hasFutureSession} /> : null}
+                {event.status === "PUBLISHED" ? <EventAdminActions eventId={event.id} /> : null}
               </article>
             );
           })}

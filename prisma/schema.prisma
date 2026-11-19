@@ -255,6 +255,15 @@ enum EventCategory {
   OTHER
 }
 
+// Acordo comercial definido pela administração antes da publicação.
+// Todos os valores monetários são guardados em cêntimos; percentagens em bps
+// (por exemplo, 1 250 = 12,50%) para evitar arredondamentos em ponto flutuante.
+enum EventPaymentMode {
+  FIXED_PACKAGE
+  PERCENTAGE
+  TICKET_DISCOUNT
+}
+
 model Venue {
   id             String  @id @default(uuid()) @db.Uuid
   organizationId String  @db.Uuid
@@ -304,9 +313,25 @@ model Event {
   staffInvites EventStaffInvite[]
   staffMembers EventStaffMembership[]
   cashShifts   CashShift[]
+  paymentAgreement EventPaymentAgreement?
 
   @@unique([organizationId, slug])
   @@map("events")
+}
+
+model EventPaymentAgreement {
+  id                    String           @id @default(uuid()) @db.Uuid
+  eventId               String           @unique @db.Uuid
+  mode                  EventPaymentMode
+  value                 Int
+  currency              String           @default("AOA")
+  definedByUserId       String           @db.Uuid
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@map("event_payment_agreements")
 }
 
 model EventStaffInvite {

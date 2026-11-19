@@ -49,6 +49,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .button-primary { color: white; background: var(--green); }
 .button-primary:hover { background: var(--green-dark); }
 .button-secondary { color: var(--ink); background: transparent; border-color: var(--line); }
+.button-danger { color: #8c281b; background: #fff4f1; border-color: #e9b9af; }
+.button-danger:hover:not(:disabled) { color: #fff; background: #a33627; border-color: #a33627; }
 .logout-button { min-height: 34px; margin-left: 4px; padding: 0 8px; border-color: transparent; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }
 .logout-button:hover { color: var(--green-dark); background: #e9eee8; }
 .button-lime { color: var(--ink); background: var(--lime); }
@@ -129,6 +131,29 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .form-field label { font-size: 12px; font-weight: 800; }
 .form-field input { width: 100%; min-height: 47px; padding: 0 13px; border: 1px solid #d7dfd8; border-radius: 12px; outline: none; background: #fbfcfa; }
 .form-field input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(23,107,80,.12); }
+.payment-agreement-form { margin: 18px 0 0; padding: 18px; border: 1px solid #dce7df; border-radius: 16px; background: linear-gradient(135deg, #f9fcfa, #fff); }
+.payment-agreement-form legend { padding: 0 7px; color: #183d2e; font-size: 13px; font-weight: 800; }
+.payment-agreement-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.payment-agreement-option { display: flex; align-items: flex-start; gap: 10px; min-height: 92px; padding: 13px; border: 1px solid #dce4dc; border-radius: 12px; cursor: pointer; background: #fff; transition: border-color .15s, background .15s, box-shadow .15s; }
+.payment-agreement-option:hover { border-color: #8bbca3; }
+.payment-agreement-option.is-selected { border-color: var(--green); background: #f0f8f3; box-shadow: 0 0 0 2px rgba(23,107,80,.08); }
+.payment-agreement-option input[type=radio] { width: 17px; min-height: 17px; height: 17px; margin: 2px 0 0; padding: 0; accent-color: var(--green); flex: 0 0 17px; }
+.payment-agreement-option span { display: grid; gap: 4px; }
+.payment-agreement-option strong { color: #203a2d; font-size: 13px; }
+.payment-agreement-option small { color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.4; }
+.payment-agreement-value { display: grid; gap: 7px; width: min(100%, 300px); margin-top: 16px; color: #293a32; font-size: 12px; font-weight: 800; }
+.payment-agreement-value input { width: 100%; min-height: 46px; padding: 0 13px; border: 1px solid #d7dfd8; border-radius: 11px; background: #fff; font: inherit; }
+.payment-agreement-value input:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(23,107,80,.12); }
+@media (max-width: 720px) { .payment-agreement-options { grid-template-columns: 1fr; } .payment-agreement-option { min-height: 0; } }
+.admin-event-card { width: min(100%, 920px); margin-inline: auto; padding: 22px 24px; }
+.admin-event-card h2 { margin: 7px 0 8px; font-size: clamp(20px, 2.3vw, 27px); }
+.admin-event-card > p:not(.form-help) { margin: 12px 0; color: #405248; line-height: 1.55; }
+.admin-event-meta { display: flex; flex-wrap: wrap; gap: 7px 16px; margin: 12px 0; color: var(--muted); font-size: 12px; }
+.admin-event-meta span + span { padding-left: 16px; border-left: 1px solid #dbe5dd; }
+.admin-event-sessions { display: grid; gap: 4px; margin: 12px 0; padding-left: 20px; color: #405248; font-size: 13px; }
+.event-admin-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 9px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #e5ece6; }
+.event-admin-actions .form-error { flex-basis: 100%; margin: 0; }
+@media (max-width: 600px) { .admin-event-card { padding: 18px; } .admin-event-meta { display: grid; gap: 5px; } .admin-event-meta span + span { padding-left: 0; border-left: 0; } .event-admin-actions { justify-content: stretch; } .event-admin-actions .button { flex: 1; } }
 .form-help { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .form-error { padding: 11px 12px; border-radius: 10px; color: #8c281b; background: #fff0ec; font-size: 13px; }
 .form-success { padding: 11px 12px; border-radius: 10px; color: #15583d; background: #e9f7ee; font-size: 13px; }

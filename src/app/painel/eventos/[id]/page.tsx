@@ -41,6 +41,7 @@ export default async function ManageEventPage({
       coverImageUrl: true,
       status: true,
       organization: { select: { currency: true } },
+      paymentAgreement: { select: { mode: true, value: true, currency: true } },
       sessions: {
         select: {
           id: true,
@@ -48,6 +49,10 @@ export default async function ManageEventPage({
           endsAt: true,
           venueId: true,
           venue: { select: { name: true, address: true, city: true, country: true } },
+          orders: {
+            where: { status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] } },
+            select: { totalCents: true, commissionCents: true },
+          },
         },
         orderBy: { startsAt: "asc" },
       },
@@ -85,6 +90,20 @@ export default async function ManageEventPage({
   });
   if (!event) notFound();
 
+  const confirmedOrders = event.sessions.flatMap((session) => session.orders);
+  const soldCents = confirmedOrders.reduce((total, order) => total + order.totalCents, 0);
+  const commissionCents = confirmedOrders.reduce((total, order) => total + order.commissionCents, 0);
+  const money = (value: number) => new Intl.NumberFormat("pt-PT", {
+    style: "currency", currency: event.paymentAgreement?.currency ?? event.organization.currency,
+  }).format(value / 100);
+  const agreementLabel = event.paymentAgreement?.mode === "FIXED_PACKAGE"
+    ? `Pacote fixo: ${money(event.paymentAgreement.value)}`
+    : event.paymentAgreement?.mode === "PERCENTAGE"
+      ? `Percentagem: ${(event.paymentAgreement.value / 100).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+      : event.paymentAgreement?.mode === "TICKET_DISCOUNT"
+        ? `Desconto por bilhete: ${money(event.paymentAgreement.value)}`
+        : null;
+
   const venueIds = [...new Set(event.sessions.map((session) => session.venueId).filter((venueId): venueId is string => Boolean(venueId)))];
   const stations = venueIds.length && ctx.permissions.has("venue:manage")
     ? await prisma.boxOfficeStation.findMany({
@@ -101,6 +120,17 @@ export default async function ManageEventPage({
         <span className="section-kicker">ÁREA DE ORGANIZAÇÃO · BILHETES</span>
         <h1>Gerir evento</h1>
         <p className="section-copy">Configure os tipos de bilhete, lotes, quantidades e sessões deste evento.</p>
+        {agreementLabel ? (
+          <section className="panel" aria-label="Resumo do acordo comercial">
+            <span className="section-kicker">ACORDO COMERCIAL</span>
+            <p><strong>{agreementLabel}</strong></p>
+            {event.paymentAgreement?.mode === "FIXED_PACKAGE" ? (
+              <p className="form-help">Valor acordado a pagar: {money(event.paymentAgreement.value)}. Este pacote não é calculado nem descontado das vendas.</p>
+            ) : (
+              <p className="form-help">Vendas confirmadas: {money(soldCents)} · Comissão: {money(commissionCents)} · Valor a receber: {money(soldCents - commissionCents)}</p>
+            )}
+          </section>
+        ) : null}
         <TicketInventoryManager
           eventId={event.id}
           sessions={event.sessions}

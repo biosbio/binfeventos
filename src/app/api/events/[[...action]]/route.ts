@@ -23,7 +23,16 @@ const UUID = z.string().uuid();
 const statusSchema = z.enum([
   "DRAFT", "PUBLISHED", "SUSPENDED", "SOLD_OUT", "POSTPONED", "CANCELLED", "COMPLETED", "CLOSED",
 ]);
-const transitionSchema = z.object({ to: statusSchema });
+const agreementSchema = z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("FIXED_PACKAGE"), value: z.number().int().positive().max(100_000_000) }),
+    z.object({ mode: z.literal("PERCENTAGE"), value: z.number().int().min(1).max(10_000) }),
+    z.object({ mode: z.literal("TICKET_DISCOUNT"), value: z.number().int().positive().max(100_000_000) }),
+  ]);
+const transitionSchema = z.object({
+  to: statusSchema,
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
+  agreement: agreementSchema.optional(),
+});
 const MAX_COVER_SIZE = 5 * 1024 * 1024;
 
 function isSupportedImage(bytes: Uint8Array, mimeType: string): boolean {
@@ -95,11 +104,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       if (!extension || !isSupportedImage(bytes, file.type)) {
         throw new ValidationError("Formato de imagem inválido. Use JPEG, PNG ou WebP.");
       }
-      const directory = pathModule.join(process.cwd(), "public", "uploads", "event-covers");
+      const directory = pathModule.join(process.cwd(), "public", "assets", "event-covers");
       await mkdir(directory, { recursive: true });
       const filename = `${randomUUID()}.${extension}`;
       await writeFile(pathModule.join(directory, filename), bytes, { flag: "wx" });
-      return NextResponse.json({ ok: true, url: `/uploads/event-covers/${filename}` }, { status: 201 });
+      return NextResponse.json({ ok: true, url: `/assets/event-covers/${filename}` }, { status: 201 });
     }
 
     // POST /api/events/create
@@ -152,8 +161,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action?: s
       const current = await requireAuth();
       if (current.platformRole === "PLATFORM_ADMIN") {
         const auth = await requirePermission("admin:platform");
+        if (body.to === "COMPLETED") {
+          if (!body.totpCode) throw new ValidationError("Código MFA obrigatório para encerrar o evento.");
+          const { verifyAdminActionMfa } = await import("@/modules/users/panel-auth");
+          await verifyAdminActionMfa(auth, body.totpCode);
+        }
         const { transitionEvent } = await import("@/modules/events/service");
-        return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to)) });
+        return NextResponse.json({ ok: true, ...(await transitionEvent(auth, eventId, body.to, body.agreement)) });
       }
       // A publicação pública nunca pode ser executada pelo organizador.
       if (body.to === "PUBLISHED") {
@@ -186,6 +200,15 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ action?: 
   const { action = [] } = await ctx.params;
 
   try {
+    // PATCH /api/events/{id}/payment-agreement — alteração acordada entre
+    // organizador e administração; afeta exclusivamente vendas futuras.
+    if (action.length === 2 && action[1] === "payment-agreement") {
+      const eventId = parse(UUID, action[0]);
+      const auth = await requirePermission("admin:platform");
+      const agreement = parse(agreementSchema, await req.json());
+      const { updateEventPaymentAgreement } = await import("@/modules/events/service");
+      return NextResponse.json({ ok: true, agreement: await updateEventPaymentAgreement(auth, eventId, agreement) });
+    }
     // PATCH /api/events/{id}
     if (action.length === 1) {
       const eventId = parse(UUID, action[0]);

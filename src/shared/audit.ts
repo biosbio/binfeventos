@@ -41,6 +41,7 @@ export type AuditAction =
   | "event.staff_access_revoked"
   | "session.created"
   | "event.updated"
+  | "event.payment_agreement_updated"
   | "event.published"
   | "event.suspended"
   | "event.cancelled"

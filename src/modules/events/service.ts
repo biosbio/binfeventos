@@ -438,7 +438,8 @@ export async function updateEvent(
 export async function transitionEvent(
   ctx: AuthContext,
   eventId: string,
-  to: EventStatus
+  to: EventStatus,
+  agreement?: { mode: "FIXED_PACKAGE" | "PERCENTAGE" | "TICKET_DISCOUNT"; value: number },
 ) {
   if (
     ctx.platformRole === "PLATFORM_ADMIN" &&
@@ -474,6 +475,16 @@ export async function transitionEvent(
     if (!hasFutureSession) {
       throw new BusinessRuleError("Adicione pelo menos uma sessão futura antes de publicar.");
     }
+    // Uma proposta só é aprovada depois de a administração registar o
+    // acordo comercial. Nas republicações, mantém-se o acordo já aprovado.
+    if (!agreement) {
+      const existingAgreement = await prisma.eventPaymentAgreement.findUnique({
+        where: { eventId: event.id }, select: { id: true },
+      });
+      if (!existingAgreement) {
+        throw new BusinessRuleError("Defina a forma de pagamento do organizador antes de publicar.");
+      }
+    }
   }
   // CANCELAR exige que não haja vendas confirmadas sem tratamento —
   // verificação completa de reembolsos fica no Domínio 5 (Partes 13+);
@@ -499,12 +510,35 @@ export async function transitionEvent(
     }
   }
 
-  await prisma.event.update({
-    where: { id: event.id },
-    data: {
-      status: to,
-      ...(to === "PUBLISHED" && { publishedAt: new Date() }),
-    },
+  const agreementCurrency = agreement
+    ? (await prisma.organization.findUnique({
+        where: { id: event.organizationId }, select: { currency: true },
+      }))?.currency ?? "AOA"
+    : null;
+
+  await prisma.$transaction(async (tx) => {
+    if (to === "PUBLISHED" && agreement) {
+      await tx.eventPaymentAgreement.upsert({
+        where: { eventId: event.id },
+        create: {
+          eventId: event.id,
+          mode: agreement.mode,
+          value: agreement.value,
+          currency: agreementCurrency ?? "AOA",
+          definedByUserId: ctx.userId,
+        },
+        update: {
+          mode: agreement.mode,
+          value: agreement.value,
+          currency: agreementCurrency ?? "AOA",
+          definedByUserId: ctx.userId,
+        },
+      });
+    }
+    await tx.event.update({
+      where: { id: event.id },
+      data: { status: to, ...(to === "PUBLISHED" && { publishedAt: new Date() }) },
+    });
   });
 
   const actionMap: Record<string, "event.published" | "event.suspended" | "event.cancelled" | "event.postponed" | "event.closed"> = {
@@ -528,6 +562,73 @@ export async function transitionEvent(
 
   // TODO (Domínio 10): notificar compradores em CANCELLED/POSTPONED.
   return { id: event.id, status: to };
+}
+
+/** Altera o acordo após confirmação entre as partes. */
+export async function updateEventPaymentAgreement(
+  ctx: AuthContext,
+  eventId: string,
+  agreement: { mode: "FIXED_PACKAGE" | "PERCENTAGE" | "TICKET_DISCOUNT"; value: number },
+) {
+  if (ctx.platformRole !== "PLATFORM_ADMIN") throw new ForbiddenError("admin:platform");
+  if (!ctx.panelVerifiedUntil || ctx.panelVerifiedUntil.getTime() <= Date.now()) {
+    throw new AppError("PANEL_STEP_UP_REQUIRED", 401, "Autenticação reforçada necessária.");
+  }
+  const event = await scopedEvent(ctx, eventId);
+  const organization = await prisma.organization.findUnique({
+    where: { id: event.organizationId }, select: { currency: true },
+  });
+  const result = await prisma.$transaction(async (tx) => {
+    const saved = await tx.eventPaymentAgreement.upsert({
+      where: { eventId: event.id },
+      create: {
+        eventId: event.id, mode: agreement.mode, value: agreement.value,
+        currency: organization?.currency ?? "AOA", definedByUserId: ctx.userId,
+      },
+      update: {
+        mode: agreement.mode, value: agreement.value,
+        currency: organization?.currency ?? "AOA", definedByUserId: ctx.userId,
+      },
+      select: { mode: true, value: true, currency: true, updatedAt: true },
+    });
+
+    // Percentagem e desconto por bilhete são retroativos por decisão das
+    // partes: todas as vendas já confirmadas passam a refletir o novo acordo.
+    if (agreement.mode === "PERCENTAGE" || agreement.mode === "TICKET_DISCOUNT") {
+      const orders = await tx.order.findMany({
+        where: {
+          session: { eventId: event.id },
+          status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+        },
+        select: { id: true, subtotalCents: true, lines: { select: { quantity: true } } },
+      });
+      for (const order of orders) {
+        const ticketCount = order.lines.reduce((sum, line) => sum + line.quantity, 0);
+        const commissionCents = agreement.mode === "PERCENTAGE"
+          ? Math.round((order.subtotalCents * agreement.value) / 10_000)
+          : Math.min(order.subtotalCents, agreement.value * ticketCount);
+        await tx.order.update({ where: { id: order.id }, data: { commissionCents } });
+      }
+      return { saved, recalculatedOrders: orders.length };
+    }
+    // Um pacote único não depende das vendas. Remove qualquer comissão que
+    // tenha sido calculada por um acordo percentual/anterior por bilhete.
+    const cleared = await tx.order.updateMany({
+      where: {
+        session: { eventId: event.id },
+        status: { in: ["CONFIRMED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+      },
+      data: { commissionCents: 0 },
+    });
+    return { saved, recalculatedOrders: cleared.count };
+  });
+  await writeAudit({
+    organizationId: event.organizationId,
+    actorUserId: ctx.userId,
+    action: "event.payment_agreement_updated",
+    after: sanitizeForAudit({ eventId: event.id, mode: result.saved.mode, value: result.saved.value, recalculatedOrders: result.recalculatedOrders }),
+  });
+  return result.saved;
 }
 
 /** Adicionar sessão a um evento. */
